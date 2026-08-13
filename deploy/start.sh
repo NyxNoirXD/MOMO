@@ -42,6 +42,7 @@ fi
 NODE_ENV=production \
   PORT="$OPENWA_PORT" \
   BIND_HOST=0.0.0.0 \
+  WEBHOOK_SHUTDOWN_DRAIN_MS=10000 \
   NODE_OPTIONS="${OPENWA_NODE_OPTIONS:---max-old-space-size=256}" \
   node dist/main &
 PIDS="$PIDS $!"
