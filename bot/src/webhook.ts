@@ -17,8 +17,14 @@ export function verifySignature(rawBody: Buffer, signatureHeader: string | undef
 
 interface MessageEventData {
   id?: string;
+  /** The conversation JID (contact, group, or broadcast) - authoritative for replies. */
+  chatId?: string;
+  /** For group messages: the group JID. For DMs: the contact JID. */
   from?: string;
+  /** The session's own JID for inbound messages. */
   to?: string;
+  /** Group sender JID for group messages. */
+  author?: string;
   body?: string;
   type?: string;
   timestamp?: number;
@@ -80,7 +86,10 @@ export function createWebhookHandler(
       return;
     }
 
-    const chatId = data.isGroup ? data.to : data.from;
+    // OpenWA always reports the conversation JID as `chatId`; `from`/`to` are
+    // chat-vs-self and NOT safe to use as a reply target (in groups `to` is the
+    // bot's own number). Fall back to `from` for non-group chats only.
+    const chatId = data.chatId ?? data.from;
     if (!chatId || data.kind === 'status' || chatId.endsWith('@broadcast')) {
       res.json({ ok: true, ignored: true });
       return;

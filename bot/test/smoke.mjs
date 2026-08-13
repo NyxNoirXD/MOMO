@@ -228,7 +228,7 @@ async function main() {
     await postWebhook(`${base}/webhook`, {
       event: 'message.received',
       idempotencyKey: 'msg_7',
-      data: { id: 'wa_7', from: '1234@c.us', to: '1234-1@g.us', body: 'just chatting', type: 'text', timestamp: 7, isGroup: true, kind: 'group', fromMe: false },
+      data: { id: 'wa_7', from: '1234-1@g.us', to: '1234@c.us', chatId: '1234-1@g.us', author: '1234@c.us', body: 'just chatting', type: 'text', timestamp: 7, isGroup: true, kind: 'group', fromMe: false },
     });
     assert.equal(sent.length, before, 'bot replied to group chatter');
 
@@ -236,7 +236,7 @@ async function main() {
     await postWebhook(`${base}/webhook`, {
       event: 'message.received',
       idempotencyKey: 'msg_7b',
-      data: { id: 'wa_7b', from: '1234@c.us', to: '1234-1@g.us', body: 'help', type: 'text', timestamp: 7, isGroup: true, kind: 'group', fromMe: false },
+      data: { id: 'wa_7b', from: '1234-1@g.us', to: '1234@c.us', chatId: '1234-1@g.us', author: '1234@c.us', body: 'help', type: 'text', timestamp: 7, isGroup: true, kind: 'group', fromMe: false },
     });
     assert.equal(sent.length, before, 'bot replied to unprefixed help in group');
 
@@ -244,7 +244,7 @@ async function main() {
     await postWebhook(`${base}/webhook`, {
       event: 'message.received',
       idempotencyKey: 'msg_7c',
-      data: { id: 'wa_7c', from: '1234@c.us', to: '1234-1@g.us', body: 'd re zero 1', type: 'text', timestamp: 7, isGroup: true, kind: 'group', fromMe: false },
+      data: { id: 'wa_7c', from: '1234-1@g.us', to: '1234@c.us', chatId: '1234-1@g.us', author: '1234@c.us', body: 'd re zero 1', type: 'text', timestamp: 7, isGroup: true, kind: 'group', fromMe: false },
     });
     assert.equal(sent.length, before, 'bot replied to unprefixed quick command in group');
 
@@ -252,7 +252,7 @@ async function main() {
     await postWebhook(`${base}/webhook`, {
       event: 'message.received',
       idempotencyKey: 'msg_7d',
-      data: { id: 'wa_7d', from: '1234@c.us', to: '1234-1@g.us', body: '/help', type: 'text', timestamp: 7, isGroup: true, kind: 'group', fromMe: false },
+      data: { id: 'wa_7d', from: '1234-1@g.us', to: '1234@c.us', chatId: '1234-1@g.us', author: '1234@c.us', body: '/help', type: 'text', timestamp: 7, isGroup: true, kind: 'group', fromMe: false },
     });
     assert.equal(sent.at(-1).text.includes('Anime Download Bot'), true, 'prefixed /help in group did not reply');
 
@@ -260,13 +260,13 @@ async function main() {
     await postWebhook(`${base}/webhook`, {
       event: 'message.received',
       idempotencyKey: 'msg_7e',
-      data: { id: 'wa_7e', from: '1234@c.us', to: '1234-1@g.us', body: '!d re zero 1', type: 'text', timestamp: 7, isGroup: true, kind: 'group', fromMe: false },
+      data: { id: 'wa_7e', from: '1234-1@g.us', to: '1234@c.us', chatId: '1234-1@g.us', author: '1234@c.us', body: '!d re zero 1', type: 'text', timestamp: 7, isGroup: true, kind: 'group', fromMe: false },
     });
     assert.equal(sent.at(-1).text.includes('Matches for "re zero"'), true, '!d quick command in group did not search');
     await postWebhook(`${base}/webhook`, {
       event: 'message.received',
       idempotencyKey: 'msg_7f',
-      data: { id: 'wa_7f', from: '1234@c.us', to: '1234-1@g.us', body: '1', type: 'text', timestamp: 7, isGroup: true, kind: 'group', fromMe: false },
+      data: { id: 'wa_7f', from: '1234-1@g.us', to: '1234@c.us', chatId: '1234-1@g.us', author: '1234@c.us', body: '1', type: 'text', timestamp: 7, isGroup: true, kind: 'group', fromMe: false },
     });
     assert.equal(sent.at(-1).text.includes('Choose *quality*'), true, 'bare number did not advance group flow');
 
