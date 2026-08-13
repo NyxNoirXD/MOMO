@@ -5,3 +5,5 @@ qr.png
 .env
 backups/
 *.log.directory
+.api_doc
+.directory
