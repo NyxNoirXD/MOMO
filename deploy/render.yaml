@@ -10,6 +10,7 @@ services:
     runtime: docker
     repo: https://github.com/your-name/MOMO
     dockerfilePath: deploy/Dockerfile
+    dockerContext: .
     plan: free
     healthCheckPath: /health
     envVars:
