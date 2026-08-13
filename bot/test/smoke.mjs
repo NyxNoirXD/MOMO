@@ -163,11 +163,11 @@ async function main() {
     const healthBody = await health.json();
     assert.equal(healthBody.ok, true);
 
-    // Help command
+    // Help command (with and without slash)
     await postWebhook(`${base}/webhook`, {
       event: 'message.received',
       idempotencyKey: 'msg_1',
-      data: { id: 'wa_1', from: '1234@c.us', to: '9999@c.us', body: 'help', type: 'text', timestamp: 1, isGroup: false, kind: 'individual', fromMe: false },
+      data: { id: 'wa_1', from: '1234@c.us', to: '9999@c.us', body: '/help', type: 'text', timestamp: 1, isGroup: false, kind: 'individual', fromMe: false },
     });
     assert.equal(sent.at(-1).text.includes('Anime Download Bot'), true, 'help reply missing');
     assert.equal(sent.at(-1).quotedMessageId, 'wa_1', 'reply not quoted');

@@ -51,7 +51,7 @@ export class BotBrain {
     this.prune(msg.chatId);
     const state = this.states.get(msg.chatId);
 
-    const lower = raw.toLowerCase();
+    const lower = raw.toLowerCase().replace(/^\/+/, '');
     if (lower === 'help' || lower === 'menu' || lower === 'start') {
       return { text: helpText() };
     }
@@ -170,7 +170,7 @@ interface QuickCommand {
 }
 
 function parseQuick(text: string): QuickCommand | null {
-  const m = text.match(/^d(?:ownload)?\s+(.+)$/i);
+  const m = text.match(/^\/?d(?:ownload)?\s+(.+)$/i);
   if (!m) {
     return null;
   }
