@@ -1,0 +1,97 @@
+# Nekostream Anime Download API
+
+## Base URL
+```
+https://mapper.nekostream.site/api/mal/
+```
+
+## Endpoint
+```
+GET /api/mal/{mal_id}/{episode}/{timestamp}
+```
+
+## Parameters
+
+| Parameter | Type | Description | Example |
+|-----------|------|-------------|---------|
+| `mal_id` | integer | MyAnimeList ID of the anime | `61316` |
+| `episode` | integer | Episode number | `1` |
+| `timestamp` | integer | Unix timestamp (use current time) | `$(date +%s)` |
+
+## Response Format
+
+```json
+{
+  "Kiwi": {
+    "sub": {
+      "download": {
+        "360p": "https://pahe.nekostream.site/XXXXX",
+        "720p": "https://pahe.nekostream.site/XXXXX",
+        "1080p": "https://pahe.nekostream.site/XXXXX"
+      }
+    },
+    "dub": {
+      "download": {
+        "360p": "https://pahe.nekostream.site/XXXXX",
+        "720p": "https://pahe.nekostream.site/XXXXX",
+        "1080p": "https://pahe.nekostream.site/XXXXX"
+      }
+    }
+  },
+  "status": {
+    "time": 1786627441,
+    "cache_expires_in": "1 hours 30 minutes 31 seconds",
+    "serves_from": "cache"
+  }
+}
+```
+
+### Server Keys
+- `Kiwi` - animepahe (most common)
+- `gogoanime` - Gogoanime
+- `anivibe` - Anivibe
+
+Each server contains `sub` (subtitled) and optionally `dub` (dubbed) objects with quality options: `360p`, `720p`, `1080p`
+
+## Example Request
+
+### cURL
+```bash
+curl "https://mapper.nekostream.site/api/mal/61316/1/$(date +%s)" --compressed
+```
+
+### Python
+```python
+import requests
+import time
+
+mal_id = 61316
+episode = 1
+timestamp = int(time.time())
+
+url = f"https://mapper.nekostream.site/api/mal/{mal_id}/{episode}/{timestamp}"
+response = requests.get(url)
+
+data = response.json()
+download_url = data["Kiwi"]["sub"]["download"]["1080p"]
+print(download_url)
+```
+
+### Bash
+```bash
+#!/bin/bash
+MAL_ID=61316
+EPISODE=1
+TIMESTAMP=$(date +%s)
+
+URL=$(curl -s "https://mapper.nekostream.site/api/mal/${MAL_ID}/${EPISODE}/${TIMESTAMP}" \
+    --compressed | jq -r '.Kiwi.sub.download."1080p"')
+
+echo "Download URL: $URL"
+```
+
+## Notes
+- Timestamp can be any recent Unix timestamp
+- Response is compressed - use `--compressed` with curl or decompress in code
+- Download links work directly with `curl -O -J -L "$URL"`
+- Cache expires in ~1.5 hours

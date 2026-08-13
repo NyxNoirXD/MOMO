@@ -1,0 +1,37 @@
+# Render Blueprint - single web service running OpenWA + bot + router in one container.
+# 1. Push this repo to GitHub
+# 2. Render -> New -> Blueprint -> connect the repo
+# 3. Fill in env vars (OPENWA_PUBLIC_URL, WEBHOOK_SECRET, BACKUP_REMOTE, RCLONE_*)
+# 4. Add a free UptimeRobot monitor pinging https://<service>.onrender.com/health every 5 min
+# 5. Open https://<service>.onrender.com/ in a browser, create the "momo" session, scan the QR
+services:
+  - type: web
+    name: momo-anime-bot
+    runtime: docker
+    repo: https://github.com/your-name/MOMO
+    dockerfilePath: deploy/Dockerfile
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: OPENWA_PUBLIC_URL
+        sync: false # e.g. https://momo-anime-bot.onrender.com
+      - key: WEBHOOK_SECRET
+        sync: false # generate: openssl rand -hex 32
+      - key: BACKUP_REMOTE
+        sync: false # optional, e.g. b2:momo-backup (recommended for session persistence)
+      - key: RCLONE_CONFIG_B2_TYPE
+        value: b2
+      - key: RCLONE_CONFIG_B2_ACCOUNT
+        sync: false # B2 keyID
+      - key: RCLONE_CONFIG_B2_KEY
+        sync: false # B2 applicationKey
+      - key: ENGINE_TYPE
+        value: baileys
+      - key: AUTO_START_SESSIONS
+        value: "true"
+      - key: OPENWA_SESSION_NAME
+        value: momo
+      - key: BOT_STATE_TTL_MS
+        value: "600000"
+      - key: LOG_LEVEL
+        value: info

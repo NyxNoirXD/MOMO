@@ -1,0 +1,27 @@
+# Local development / Oracle VPS deployment: one container, everything inside.
+#   docker compose up -d --build
+#   open http://localhost:2785 -> dashboard -> create session "momo" -> scan QR
+# Webhook auto-registration needs OPENWA_PUBLIC_URL + WEBHOOK_SECRET (see .env).
+services:
+  momo:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    container_name: momo
+    ports:
+      - '2785:2785'
+    volumes:
+      - ./data:/app/data
+    environment:
+      - ENGINE_TYPE=baileys
+      - AUTO_START_SESSIONS=true
+      - OPENWA_SESSION_NAME=${OPENWA_SESSION_NAME:-momo}
+      - OPENWA_PUBLIC_URL=${OPENWA_PUBLIC_URL:-}
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET:-}
+      - BACKUP_REMOTE=${BACKUP_REMOTE:-}
+      - RCLONE_CONFIG_B2_TYPE=${RCLONE_CONFIG_B2_TYPE:-}
+      - RCLONE_CONFIG_B2_ACCOUNT=${RCLONE_CONFIG_B2_ACCOUNT:-}
+      - RCLONE_CONFIG_B2_KEY=${RCLONE_CONFIG_B2_KEY:-}
+      - BOT_STATE_TTL_MS=${BOT_STATE_TTL_MS:-600000}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    restart: unless-stopped

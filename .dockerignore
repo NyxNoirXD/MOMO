@@ -1,0 +1,10 @@
+.git
+.gitignore
+README.md
+data
+backups
+bot/node_modules
+bot/dist
+bot/test
+.env
+*.log
