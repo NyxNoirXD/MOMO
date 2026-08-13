@@ -23,7 +23,6 @@ function resolveApiKey(configured: string): string {
     if (candidate && fs.existsSync(candidate)) {
       const key = fs.readFileSync(candidate, 'utf8').trim();
       if (key) {
-        log(`auto-discovered OpenWA API key from ${candidate}`);
         return key;
       }
     }
@@ -35,9 +34,13 @@ async function ensureWebhookRegistered(
   openwa: OpenWaClient,
   publicUrl: string,
   secret: string,
+  log: (msg: string) => void,
 ): Promise<void> {
   const webhookUrl = `${publicUrl.replace(/\/+$/, '')}/webhook`;
-  log(`ensuring webhook ${webhookUrl} is registered...`);
+  log(`ensuring webhook ${webhookUrl} is registered (retries until success)...`);
+  // Retry forever: OpenWA may still be booting, the API key may not exist yet,
+  // or the session may not have been created in the dashboard. The API key is
+  // re-read on every attempt, so a late-created /app/data/.api-key is picked up.
   for (let attempt = 1; ; attempt++) {
     try {
       const existing = await openwa.listWebhooks();
@@ -49,22 +52,21 @@ async function ensureWebhookRegistered(
       log('webhook registered');
       return;
     } catch (err) {
-      if (attempt >= 60) {
-        log(`webhook registration giving up: ${err instanceof Error ? err.message : String(err)}`);
-        return;
+      if (attempt === 1 || attempt % 10 === 0) {
+        log(`webhook registration pending (attempt ${attempt}): ${err instanceof Error ? err.message : String(err)}`);
       }
-      log(
-        `webhook registration pending (${attempt}/60): ${err instanceof Error ? err.message : String(err)}`,
-      );
-      await new Promise((r) => setTimeout(r, 10_000));
+      await new Promise((r) => setTimeout(r, 30_000));
     }
   }
 }
 
 async function main(): Promise<void> {
   const config = loadConfig();
-  const apiKey = resolveApiKey(config.openwaApiKey);
-  const openwa = new OpenWaClient(config.openwaUrl, apiKey, config.openwaSessionName);
+  const openwa = new OpenWaClient(
+    config.openwaUrl,
+    () => resolveApiKey(config.openwaApiKey),
+    config.openwaSessionName,
+  );
   const brain = new BotBrain(
     new AniListClient(config.searchCacheTtlMs, config.anilistEndpoint),
     new NekoStreamClient(config.nekoBaseUrl),
@@ -81,13 +83,13 @@ async function main(): Promise<void> {
 
   app.listen(config.port, () => {
     log(`bot listening on :${config.port}`);
-    if (apiKey) {
+    if (resolveApiKey(config.openwaApiKey)) {
       log('OpenWA API key: configured');
     } else {
       log('WARNING: no OpenWA API key - set OPENWA_API_KEY or mount /app/data/.api-key');
     }
     if (config.publicUrl && config.webhookSecret) {
-      void ensureWebhookRegistered(openwa, config.publicUrl, config.webhookSecret);
+      void ensureWebhookRegistered(openwa, config.publicUrl, config.webhookSecret, log);
     } else {
       log('webhook auto-registration disabled (set OPENWA_PUBLIC_URL + WEBHOOK_SECRET)');
     }

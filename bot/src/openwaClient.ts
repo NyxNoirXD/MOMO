@@ -18,7 +18,7 @@ export class OpenWaClient {
 
   constructor(
     private readonly baseUrl: string,
-    private readonly apiKey: string,
+    private readonly getApiKey: () => string,
     private readonly sessionName: string,
   ) {}
 
@@ -32,7 +32,8 @@ export class OpenWaClient {
     }>;
     const found = sessions.find((s) => s.name === this.sessionName);
     if (!found) {
-      throw new OpenWaError(`session "${this.sessionName}" not found`, 404);
+      const available = sessions.map((s) => s.name).join(', ') || 'none yet';
+      throw new OpenWaError(`session "${this.sessionName}" not found (available: ${available})`, 404);
     }
     this.sessionId = found.id;
     return found.id;
@@ -78,8 +79,9 @@ export class OpenWaClient {
     init: { method?: string; body?: unknown } = {},
   ): Promise<unknown> {
     const headers: Record<string, string> = { Accept: 'application/json' };
-    if (this.apiKey) {
-      headers['X-API-Key'] = this.apiKey;
+    const apiKey = this.getApiKey();
+    if (apiKey) {
+      headers['X-API-Key'] = apiKey;
     }
     let body: string | undefined;
     if (init.body !== undefined) {
@@ -93,6 +95,11 @@ export class OpenWaClient {
       signal: AbortSignal.timeout(15_000),
     });
     if (!res.ok) {
+      // Auth/not-found failures may mean a stale session cache or a key that has
+      // since rotated/appeared - forget the cache so the next call re-resolves.
+      if (res.status === 401 || res.status === 404) {
+        this.sessionId = null;
+      }
       const text = await res.text().catch(() => '');
       throw new OpenWaError(
         `OpenWA ${init.method ?? 'GET'} ${path} -> ${res.status}: ${text.slice(0, 300)}`,
