@@ -69,6 +69,7 @@ async function main(): Promise<void> {
     new AniListClient(config.searchCacheTtlMs, config.anilistEndpoint),
     new NekoStreamClient(config.nekoBaseUrl),
     config.stateTtlMs,
+    config.groupCommandPrefixes,
   );
 
   const app = express();

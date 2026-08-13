@@ -223,7 +223,7 @@ async function main() {
     });
     assert.equal(sent.at(-1).text.includes('Choose *quality*'), true, 'quick command did not reach quality step');
 
-    // Group flow: commands work, bare text ignored
+    // Group flow: commands need a prefix, bare text ignored
     const before = sent.length;
     await postWebhook(`${base}/webhook`, {
       event: 'message.received',
@@ -231,6 +231,44 @@ async function main() {
       data: { id: 'wa_7', from: '1234@c.us', to: '1234-1@g.us', body: 'just chatting', type: 'text', timestamp: 7, isGroup: true, kind: 'group', fromMe: false },
     });
     assert.equal(sent.length, before, 'bot replied to group chatter');
+
+    // help without prefix in group: ignored
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_7b',
+      data: { id: 'wa_7b', from: '1234@c.us', to: '1234-1@g.us', body: 'help', type: 'text', timestamp: 7, isGroup: true, kind: 'group', fromMe: false },
+    });
+    assert.equal(sent.length, before, 'bot replied to unprefixed help in group');
+
+    // quick command without prefix in group: ignored
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_7c',
+      data: { id: 'wa_7c', from: '1234@c.us', to: '1234-1@g.us', body: 'd re zero 1', type: 'text', timestamp: 7, isGroup: true, kind: 'group', fromMe: false },
+    });
+    assert.equal(sent.length, before, 'bot replied to unprefixed quick command in group');
+
+    // prefixed commands in group work
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_7d',
+      data: { id: 'wa_7d', from: '1234@c.us', to: '1234-1@g.us', body: '/help', type: 'text', timestamp: 7, isGroup: true, kind: 'group', fromMe: false },
+    });
+    assert.equal(sent.at(-1).text.includes('Anime Download Bot'), true, 'prefixed /help in group did not reply');
+
+    // ! prefix also works and starts a flow; bare numbers advance it
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_7e',
+      data: { id: 'wa_7e', from: '1234@c.us', to: '1234-1@g.us', body: '!d re zero 1', type: 'text', timestamp: 7, isGroup: true, kind: 'group', fromMe: false },
+    });
+    assert.equal(sent.at(-1).text.includes('Matches for "re zero"'), true, '!d quick command in group did not search');
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_7f',
+      data: { id: 'wa_7f', from: '1234@c.us', to: '1234-1@g.us', body: '1', type: 'text', timestamp: 7, isGroup: true, kind: 'group', fromMe: false },
+    });
+    assert.equal(sent.at(-1).text.includes('Choose *quality*'), true, 'bare number did not advance group flow');
 
     // Bad signature rejected
     const bad = Buffer.from(JSON.stringify({ event: 'message.received', data: { body: 'x' } }));

@@ -7,6 +7,7 @@ export interface Config {
   publicUrl: string;
   searchCacheTtlMs: number;
   stateTtlMs: number;
+  groupCommandPrefixes: string;
   anilistEndpoint: string;
   nekoBaseUrl: string;
 }
@@ -28,6 +29,7 @@ export function loadConfig(): Config {
     publicUrl: process.env.OPENWA_PUBLIC_URL ?? '',
     searchCacheTtlMs: intEnv('SEARCH_CACHE_TTL_MS', 5 * 60 * 1000),
     stateTtlMs: intEnv('BOT_STATE_TTL_MS', 10 * 60 * 1000),
+    groupCommandPrefixes: process.env.GROUP_COMMAND_PREFIXES ?? '/!',
     anilistEndpoint: process.env.ANILIST_ENDPOINT ?? 'https://graphql.anilist.co',
     nekoBaseUrl: process.env.NEKO_BASE_URL ?? 'https://mapper.nekostream.site/api/mal',
   };

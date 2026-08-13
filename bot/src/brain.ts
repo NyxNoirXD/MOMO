@@ -37,11 +37,19 @@ export interface BotReply {
 export class BotBrain {
   private states = new Map<string, FlowState>();
 
+  private readonly prefixRe: RegExp;
+  private readonly prefixes: string;
+
   constructor(
     private readonly anilist: AniListClient,
     private readonly neko: NekoStreamClient,
     private readonly stateTtlMs: number,
-  ) {}
+    groupCommandPrefixes = '/!',
+  ) {
+    this.prefixes = groupCommandPrefixes;
+    const unique = [...new Set(groupCommandPrefixes)];
+    this.prefixRe = new RegExp(`^[${unique.map((c) => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('')}]+`);
+  }
 
   async handle(msg: Incoming): Promise<BotReply | null> {
     const raw = msg.body.trim();
@@ -51,16 +59,33 @@ export class BotBrain {
     this.prune(msg.chatId);
     const state = this.states.get(msg.chatId);
 
-    const lower = raw.toLowerCase().replace(/^\/+/, '');
+    const hasPrefix = this.prefixRe.test(raw);
+    const stripped = raw.replace(this.prefixRe, '');
+    const lower = stripped.toLowerCase();
+
+    // Groups: without a command prefix, only advance an already-active flow
+    // (numbers / quality replies). Everything else is ignored.
+    if (msg.isGroup && !hasPrefix) {
+      if (state && state.step !== 'idle') {
+        if (/^\d+$/.test(raw)) {
+          return this.advance(msg.chatId, state, Number.parseInt(raw, 10), raw);
+        }
+        if (state.step === 'awaiting_quality' && isQuality(raw)) {
+          return this.finish(msg.chatId, state, normalizeQuality(raw));
+        }
+      }
+      return null;
+    }
+
     if (lower === 'help' || lower === 'menu' || lower === 'start') {
-      return { text: helpText() };
+      return { text: helpText(this.prefixes) };
     }
     if (lower === 'cancel' || lower === 'stop' || lower === 'exit') {
       this.states.delete(msg.chatId);
       return { text: 'Cancelled. Send an anime name to start over, or *help*.' };
     }
 
-    const quick = parseQuick(raw);
+    const quick = parseQuick(stripped);
     if (quick) {
       return this.runSearch(msg.chatId, quick.query, quick.episode);
     }

@@ -106,8 +106,10 @@ See [.env.example](.env.example) for the full list with comments.
 | `360p` / `720p` / `1080p` | Quality choice |
 | `cancel` | Abort the current flow |
 
-In groups the bot only responds to commands and active flows (bare anime names are
-ignored so it doesn't spam chat).
+**In groups** the bot only responds to prefixed commands (`/help`, `!d one piece 1087`,
+`/cancel`) — bare anime names and messages are ignored so it doesn't spam chat. The
+prefixes are configurable via `GROUP_COMMAND_PREFIXES` (default `/!`); numbers and
+quality replies keep advancing an already-started flow. In DMs prefixes are optional.
 
 ## Disclaimer
 

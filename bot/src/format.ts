@@ -14,17 +14,19 @@ export function normalizeQuality(input: string): Quality {
   return (q.includes('360') ? '360p' : q.includes('720') ? '720p' : '1080p') as Quality;
 }
 
-export function helpText(): string {
+export function helpText(prefixes = '/!'): string {
+  const p = prefixes.includes(' ') ? '' : prefixes;
   return [
     '*Momo - Anime Download Bot*',
     '',
     '_Commands:_',
-    '• Send an *anime name* - search and pick',
-    '• *d <title> <episode>* - quick download, e.g. `d one piece 1087`',
+    `• Send an *anime name* - search and pick${p ? ` (PM only)` : ''}`,
+    `• *d <title> <episode>* - quick download, e.g. \`${p}d one piece 1087\``,
     '• Reply with numbers to walk through: pick -> episode -> quality',
     '• *cancel* - stop current search',
     '• *help* / *menu* - this message',
     '',
+    `_In groups, prefix commands with one of: \`${p || 'none'}\`_`,
     'Works in DMs and groups.',
   ].join('\n');
 }
