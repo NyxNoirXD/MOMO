@@ -95,7 +95,12 @@ export function createWebhookHandler(
       return;
     }
 
-    const incoming: Incoming = { chatId, body: data.body, isGroup: Boolean(data.isGroup) };
+    const incoming: Incoming = {
+      chatId,
+      body: data.body,
+      isGroup: Boolean(data.isGroup),
+      author: data.author,
+    };
     let reply;
     try {
       reply = await brain.handle(incoming);

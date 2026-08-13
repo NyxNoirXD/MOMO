@@ -263,6 +263,17 @@ async function main() {
       data: { id: 'wa_7e', from: '1234-1@g.us', to: '1234@c.us', chatId: '1234-1@g.us', author: '1234@c.us', body: '!d re zero 1', type: 'text', timestamp: 7, isGroup: true, kind: 'group', fromMe: false },
     });
     assert.equal(sent.at(-1).text.includes('Matches for "re zero"'), true, '!d quick command in group did not search');
+
+    // Hijack attempt: another member replies "1" - must NOT advance A's flow
+    const hijack = sent.length;
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_7h',
+      data: { id: 'wa_7h', from: '1234-1@g.us', to: '1234@c.us', chatId: '1234-1@g.us', author: '5555@c.us', body: '1', type: 'text', timestamp: 7, isGroup: true, kind: 'group', fromMe: false },
+    });
+    assert.equal(sent.length, hijack, 'another member advanced the flow (hijack)');
+
+    // The original author can still advance
     await postWebhook(`${base}/webhook`, {
       event: 'message.received',
       idempotencyKey: 'msg_7f',

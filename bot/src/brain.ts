@@ -28,6 +28,8 @@ export interface Incoming {
   chatId: string;
   body: string;
   isGroup: boolean;
+  /** Group sender JID for group messages (used to scope flow state per user). */
+  author?: string;
 }
 
 export interface BotReply {
@@ -56,8 +58,11 @@ export class BotBrain {
     if (!raw) {
       return null;
     }
-    this.prune(msg.chatId);
-    const state = this.states.get(msg.chatId);
+    // In groups, scope the flow to the SENDER: otherwise any member could
+    // advance (or hijack) another member's active download by replying "1".
+    const stateKey = msg.isGroup && msg.author ? `${msg.chatId}:${msg.author}` : msg.chatId;
+    this.prune(stateKey);
+    const state = this.states.get(stateKey);
 
     const hasPrefix = this.prefixRe.test(raw);
     const stripped = raw.replace(this.prefixRe, '');
@@ -68,10 +73,10 @@ export class BotBrain {
     if (msg.isGroup && !hasPrefix) {
       if (state && state.step !== 'idle') {
         if (/^\d+$/.test(raw)) {
-          return this.advance(msg.chatId, state, Number.parseInt(raw, 10), raw);
+          return this.advance(stateKey, state, Number.parseInt(raw, 10), raw);
         }
         if (state.step === 'awaiting_quality' && isQuality(raw)) {
-          return this.finish(msg.chatId, state, normalizeQuality(raw));
+          return this.finish(stateKey, state, normalizeQuality(raw));
         }
       }
       return null;
@@ -81,28 +86,28 @@ export class BotBrain {
       return { text: helpText(this.prefixes) };
     }
     if (lower === 'cancel' || lower === 'stop' || lower === 'exit') {
-      this.states.delete(msg.chatId);
+      this.states.delete(stateKey);
       return { text: 'Cancelled. Send an anime name to start over, or *help*.' };
     }
 
     const quick = parseQuick(stripped);
     if (quick) {
-      return this.runSearch(msg.chatId, quick.query, quick.episode);
+      return this.runSearch(stateKey, quick.query, quick.episode);
     }
 
     if (state && state.step !== 'idle' && /^\d+$/.test(raw)) {
-      return this.advance(msg.chatId, state, Number.parseInt(raw, 10), raw);
+      return this.advance(stateKey, state, Number.parseInt(raw, 10), raw);
     }
 
     if (state && state.step === 'awaiting_quality' && isQuality(raw)) {
-      return this.finish(msg.chatId, state, normalizeQuality(raw));
+      return this.finish(stateKey, state, normalizeQuality(raw));
     }
 
     if (msg.isGroup) {
       return null;
     }
 
-    return this.runSearch(msg.chatId, raw, undefined);
+    return this.runSearch(stateKey, raw, undefined);
   }
 
   private async runSearch(chatId: string, query: string, episode: number | undefined): Promise<BotReply> {
