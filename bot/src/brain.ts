@@ -6,6 +6,7 @@ import {
   Lang,
   QUALITIES,
   Quality,
+  EpisodeRange,
   episodeLabel,
   episodePrompt,
   helpText,
@@ -22,12 +23,15 @@ import {
 
 type Step = 'idle' | 'awaiting_pick' | 'awaiting_episode' | 'awaiting_lang' | 'awaiting_quality';
 
+/** Resolved episode numbers, or the 'latest' keyword (resolved once the anime is known). */
+type EpisodeSpec = number[] | 'latest';
+
 interface FlowState {
   step: Step;
   query: string;
   results: AnimeMatch[];
   anime?: AnimeMatch;
-  episodes?: number[];
+  episodes?: EpisodeSpec;
   lang?: Lang;
   updatedAt: number;
 }
@@ -104,7 +108,18 @@ export class BotBrain {
     }
 
     if (state && state.step !== 'idle') {
-      return this.advance(stateKey, state, raw);
+      if (isAdvanceInput(state, raw)) {
+        return this.advance(stateKey, state, raw);
+      }
+      if (msg.isGroup) {
+        return null;
+      }
+      // DM mid-flow: step-shaped tokens at the wrong step get a nudge, anything
+      // else (e.g. a new anime name) restarts the flow as a fresh search.
+      if (/^\d+$/.test(raw) || /^\d+\s*-\s*\d+$/.test(raw) || isLang(raw) || isQuality(raw)) {
+        return this.advance(stateKey, state, raw);
+      }
+      return this.runSearch(stateKey, raw, undefined);
     }
 
     if (msg.isGroup) {
@@ -114,7 +129,7 @@ export class BotBrain {
     return this.runSearch(stateKey, raw, undefined);
   }
 
-  private async runSearch(chatId: string, query: string, episodes: number[] | undefined): Promise<BotReply> {
+  private async runSearch(chatId: string, query: string, spec: EpisodeSpec | undefined): Promise<BotReply> {
     let results: AnimeMatch[];
     try {
       results = await this.anilist.search(query);
@@ -127,14 +142,18 @@ export class BotBrain {
     }
     if (results.length === 1) {
       const anime = results[0];
-      if (episodes !== undefined) {
-        this.states.set(chatId, { step: 'awaiting_lang', query, results, anime, episodes, updatedAt: Date.now() });
-        return { text: langPrompt(anime, episodes) };
+      if (spec !== undefined) {
+        const resolved = resolveEpisodes(spec, anime);
+        if ('error' in resolved) {
+          return { text: resolved.error };
+        }
+        this.states.set(chatId, { step: 'awaiting_lang', query, results, anime, episodes: resolved.episodes, updatedAt: Date.now() });
+        return { text: langPrompt(anime, resolved.episodes) };
       }
       this.states.set(chatId, { step: 'awaiting_episode', query, results, anime, updatedAt: Date.now() });
       return { text: episodePrompt(anime) };
     }
-    this.states.set(chatId, { step: 'awaiting_pick', query, results, episodes, updatedAt: Date.now() });
+    this.states.set(chatId, { step: 'awaiting_pick', query, results, episodes: spec, updatedAt: Date.now() });
     return { text: searchList(query, results) };
   }
 
@@ -151,14 +170,20 @@ export class BotBrain {
         };
       }
       if (state.episodes !== undefined) {
-        this.states.set(chatId, { ...state, step: 'awaiting_lang', anime, updatedAt: Date.now() });
-        return { text: langPrompt(anime, state.episodes) };
+        const resolved = resolveEpisodes(state.episodes, anime);
+        if ('error' in resolved) {
+          return { text: resolved.error };
+        }
+        this.states.set(chatId, { ...state, step: 'awaiting_lang', anime, episodes: resolved.episodes, updatedAt: Date.now() });
+        return { text: langPrompt(anime, resolved.episodes) };
       }
       this.states.set(chatId, { ...state, step: 'awaiting_episode', anime, updatedAt: Date.now() });
       return { text: episodePrompt(anime) };
     }
     if (state.step === 'awaiting_episode') {
-      const parsed = parseEpisodes(raw);
+      const parsed = /^(latest|last|newest)$/i.test(raw)
+        ? resolveEpisodes('latest', state.anime!)
+        : parseEpisodes(raw);
       if ('error' in parsed) {
         return { text: parsed.error };
       }
@@ -172,7 +197,8 @@ export class BotBrain {
         return { text: 'Reply *sub* or *dub* (or 1 or 2), or *cancel*.' };
       }
       this.states.set(chatId, { ...state, step: 'awaiting_quality', lang, updatedAt: Date.now() });
-      return { text: qualityPrompt(state.anime!, state.episodes!) };
+      const episodes = state.episodes;
+      return { text: qualityPrompt(state.anime!, Array.isArray(episodes) ? episodes : []) };
     }
     if (state.step === 'awaiting_quality') {
       const number = Number.parseInt(raw, 10);
@@ -192,7 +218,10 @@ export class BotBrain {
 
   private async finish(chatId: string, state: FlowState, quality: Quality): Promise<BotReply> {
     const anime = state.anime!;
-    const episodes = state.episodes!;
+    const episodes = state.episodes;
+    if (!Array.isArray(episodes)) {
+      return { text: 'What?' }; // unreachable: awaiting_quality always holds resolved episodes
+    }
     const lang = state.lang!;
     this.states.delete(chatId);
     const fetched: Array<{ episode: number; result: NekoResult }> = [];
@@ -241,7 +270,7 @@ export class BotBrain {
 
 interface QuickCommand {
   query: string;
-  episodes?: number[];
+  episodes?: EpisodeSpec;
   error?: string;
 }
 
@@ -252,14 +281,18 @@ function parseQuick(text: string): QuickCommand | null {
   }
   const rest = m[1].trim();
   const withEp =
-    rest.match(/^(.*?)\s+ep(?:isode)?\.?\s+([\d\s-]+)$/i) ??
-    rest.match(/^(.*?)\s+([\d\s-]+)$/);
+    rest.match(/^(.*?)\s+ep(?:isode)?\.?\s+([\d\s-]+|latest|last|newest)$/i) ??
+    rest.match(/^(.*?)\s+([\d\s-]+|latest|last|newest)$/i);
   if (withEp) {
     const query = withEp[1].trim();
     if (!query) {
       return null;
     }
-    const parsed = parseEpisodes(withEp[2]);
+    const token = withEp[2].trim();
+    if (/^(latest|last|newest)$/i.test(token)) {
+      return { query, episodes: 'latest' };
+    }
+    const parsed = parseEpisodes(token);
     if ('error' in parsed) {
       return { query, error: parsed.error };
     }
@@ -268,10 +301,27 @@ function parseQuick(text: string): QuickCommand | null {
   return { query: rest };
 }
 
+function resolveEpisodes(spec: EpisodeSpec, anime: AnimeMatch): EpisodeRange {
+  if (spec === 'latest') {
+    const latest =
+      anime.nextAiringEpisode && anime.nextAiringEpisode > 1
+        ? anime.nextAiringEpisode - 1
+        : anime.episodes;
+    if (!latest || latest < 1) {
+      return { error: `I don't know the latest episode for *${anime.title}*. Send a number or a range.` };
+    }
+    return { episodes: [latest] };
+  }
+  return { episodes: spec };
+}
+
 function isAdvanceInput(state: FlowState, raw: string): boolean {
   const t = raw.trim();
-  if (state.step === 'awaiting_pick' || state.step === 'awaiting_episode') {
-    return /^\d+$/.test(t) || /^\d+\s*-\s*\d+$/.test(t);
+  if (state.step === 'awaiting_pick') {
+    return /^\d+$/.test(t);
+  }
+  if (state.step === 'awaiting_episode') {
+    return /^\d+$/.test(t) || /^\d+\s*-\s*\d+$/.test(t) || /^(latest|last|newest)$/i.test(t);
   }
   if (state.step === 'awaiting_lang') {
     return isLang(t) || /^[12]$/.test(t);

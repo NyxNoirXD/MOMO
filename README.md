@@ -105,9 +105,11 @@ See [.env.example](.env.example) for the full list with comments.
 | `help` / `menu` | Command list |
 | `d <title> <ep>` | Quick download, e.g. `d one piece 1087` |
 | `d <title> <start>-<end>` | Quick range download, e.g. `d one piece 1080-1090` (max 24) |
+| `d <title> latest` | Newest episode (from AniList airing data, e.g. `d one piece latest`) |
 | `<anime name>` (DM) | Search and start the pick flow |
 | `<number>` | Select match / episode / quality (depends on flow step) |
 | `5-8` | Episode range (max 24 episodes per request) |
+| `latest` | Newest episode (at the episode step) |
 | `sub` / `dub` | Language choice (one per request - prevents link flooding) |
 | `360p` / `720p` / `1080p` | Quality choice |
 | `cancel` | Abort the current flow |

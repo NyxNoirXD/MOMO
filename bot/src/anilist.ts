@@ -5,6 +5,10 @@ export interface AnimeMatch {
   englishTitle?: string;
   episodes?: number;
   format: string;
+  /** Release year of the first episode (startDate.year), if known. */
+  year?: number;
+  /** nextAiringEpisode.episode if the show is currently airing. */
+  nextAiringEpisode?: number;
   coverImage?: string;
 }
 
@@ -18,6 +22,8 @@ query ($search: String) {
       episodes
       format
       status
+      startDate { year }
+      nextAiringEpisode { episode }
       coverImage { large }
     }
   }
@@ -88,6 +94,8 @@ export class AniListClient {
         englishTitle: title.english,
         episodes: m.episodes == null ? undefined : Number(m.episodes),
         format: String(m.format ?? 'TV'),
+        year: (m.startDate as { year?: number | null } | null)?.year ?? undefined,
+        nextAiringEpisode: (m.nextAiringEpisode as { episode?: number } | null)?.episode,
         coverImage: (m.coverImage as { large?: string } | null)?.large,
       };
       seen.add(malId);

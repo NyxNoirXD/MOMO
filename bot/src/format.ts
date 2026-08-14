@@ -74,8 +74,8 @@ export function helpText(prefixes = '/!'): string {
     '',
     '_Commands:_',
     `• Send an *anime name* - search and pick${p ? ` (PM only)` : ''}`,
-    `• *d <title> <episode>* - quick download, e.g. \`${p}d one piece 1087\` or \`${p}d one piece 1080-1090\``,
-    '• Ranges like `5-8` work too (max 24 episodes per request)',
+    `• *d <title> <episode>* - quick download, e.g. \`${p}d one piece 1087\`, \`${p}d one piece 1080-1090\` or \`${p}d one piece latest\``,
+    '• Ranges like `5-8` work too (max 24 episodes per request); *latest* grabs the newest episode',
     '• Reply with numbers to walk through: pick -> episode/range -> sub/dub -> quality',
     '• *cancel* - stop current search',
     '• *help* / *menu* - this message',
@@ -88,7 +88,13 @@ export function helpText(prefixes = '/!'): string {
 export function searchList(query: string, results: AnimeMatch[]): string {
   const lines = results.map((m, i) => {
     const title = m.englishTitle && m.englishTitle !== m.title ? `${m.title} (${m.englishTitle})` : m.title;
-    const meta = [m.format, m.episodes ? `${m.episodes} eps` : undefined].filter(Boolean).join(' · ');
+    const meta = [
+      m.format,
+      m.year ? String(m.year) : undefined,
+      m.episodes ? `${m.episodes} eps` : m.nextAiringEpisode ? 'airing' : undefined,
+    ]
+      .filter(Boolean)
+      .join(' · ');
     return `${i + 1}. *${title}*${meta ? ` - _${meta}_` : ''}`;
   });
   return [`*Matches for "${query}":*`, '', ...lines, '', 'Reply with a *number* to choose, or *cancel*.'].join('\n');
@@ -96,7 +102,12 @@ export function searchList(query: string, results: AnimeMatch[]): string {
 
 export function episodePrompt(anime: AnimeMatch): string {
   const max = anime.episodes ? ` (max ${anime.episodes})` : '';
-  return `*${anime.title}* - send the *episode number*${max}, a *range* like \`5-8\` (max ${MAX_EPISODES} eps), or *cancel*.`;
+  const latest = anime.nextAiringEpisode
+    ? ` or *latest* (ep ${anime.nextAiringEpisode - 1})`
+    : anime.episodes
+      ? ` or *latest* (ep ${anime.episodes})`
+      : ' or *latest*';
+  return `*${anime.title}* - send the *episode number*${max}, a *range* like \`5-8\` (max ${MAX_EPISODES} eps)${latest}, or *cancel*.`;
 }
 
 export function langPrompt(anime: AnimeMatch, episodes: number[]): string {

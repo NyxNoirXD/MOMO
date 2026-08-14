@@ -81,8 +81,8 @@ function startAnilistStub() {
           data: {
             Page: {
               media: [
-                { id: 1, idMal: 61316, title: { romaji: 'Re:Zero Season 4', english: 'Re:Zero' }, episodes: 12, format: 'TV', coverImage: { large: 'https://img.test/cover-rezero.jpg' } },
-                { id: 2, idMal: 99999, title: { romaji: 'Re:Zero The Movie', english: null }, episodes: 1, format: 'MOVIE', coverImage: { large: 'https://img.test/cover-movie.jpg' } },
+                { id: 1, idMal: 61316, title: { romaji: 'Re:Zero Season 4', english: 'Re:Zero' }, episodes: 12, format: 'TV', startDate: { year: 2016 }, nextAiringEpisode: { episode: 8 }, coverImage: { large: 'https://img.test/cover-rezero.jpg' } },
+                { id: 2, idMal: 99999, title: { romaji: 'Re:Zero The Movie', english: null }, episodes: 1, format: 'MOVIE', startDate: { year: 2019 }, coverImage: { large: 'https://img.test/cover-movie.jpg' } },
               ],
             },
           },
@@ -190,6 +190,8 @@ async function main() {
     const list = sent.at(-1).text;
     assert.equal(list.includes('1. *Re:Zero Season 4'), true, 'search list missing match 1');
     assert.equal(list.includes('2. *Re:Zero The Movie*'), true, 'search list missing match 2');
+    assert.equal(list.includes('2016'), true, 'search list missing release year');
+    assert.equal(list.includes('12 eps'), true, 'search list missing episode count');
 
     await postWebhook(`${base}/webhook`, {
       event: 'message.received',
@@ -263,6 +265,32 @@ async function main() {
     assert.equal(rangeCard.includes('Ep 5: https://pahe.test/k2'), true, 'range card missing ep 5');
     assert.equal(rangeCard.includes('Ep 8: https://pahe.test/k2'), true, 'range card missing ep 8');
 
+    // 'latest' keyword at the episode step resolves via nextAiringEpisode (ep 8 -> 7)
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_3c',
+      data: { id: 'wa_3c', from: '1234@c.us', to: '9999@c.us', body: 're zero', type: 'text', timestamp: 3, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_3d',
+      data: { id: 'wa_3d', from: '1234@c.us', to: '9999@c.us', body: '1', type: 'text', timestamp: 3, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_3e',
+      data: { id: 'wa_3e', from: '1234@c.us', to: '9999@c.us', body: 'latest', type: 'text', timestamp: 3, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    assert.equal(sent.at(-1).text.includes('Episode 7'), true, 'latest keyword at episode step did not resolve');
+
+    // Mid-flow, a new anime name restarts the search instead of being nudged
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_3f',
+      data: { id: 'wa_3f', from: '1234@c.us', to: '9999@c.us', body: 're zero', type: 'text', timestamp: 3, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    assert.equal(sent.at(-1).text.includes('Matches for "re zero"'), true, 'new search mid-flow did not restart');
+
     // Oversized range rejected
     await postWebhook(`${base}/webhook`, {
       event: 'message.received',
@@ -270,6 +298,31 @@ async function main() {
       data: { id: 'wa_2c', from: '1234@c.us', to: '9999@c.us', body: 'd re zero 1-30', type: 'text', timestamp: 2, isGroup: false, kind: 'individual', fromMe: false },
     });
     assert.equal(sent.at(-1).text.includes('Max *24* episodes per request'), true, 'oversized range not rejected');
+
+    // 'latest' in the quick command resolves via nextAiringEpisode (ep 8 -> latest 7)
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_2d',
+      data: { id: 'wa_2d', from: '1234@c.us', to: '9999@c.us', body: 'd re zero latest', type: 'text', timestamp: 2, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    assert.equal(sent.at(-1).text.includes('Matches for "re zero"'), true, 'latest quick command did not search');
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_2e',
+      data: { id: 'wa_2e', from: '1234@c.us', to: '9999@c.us', body: '1', type: 'text', timestamp: 2, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    assert.equal(sent.at(-1).text.includes('Episode 7'), true, 'latest did not resolve to nextAiringEpisode - 1');
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_2f',
+      data: { id: 'wa_2f', from: '1234@c.us', to: '9999@c.us', body: 'sub', type: 'text', timestamp: 2, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_2g',
+      data: { id: 'wa_2g', from: '1234@c.us', to: '9999@c.us', body: '720p', type: 'text', timestamp: 2, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    assert.equal(sentImages.at(-1).caption.includes('Episode 7 (sub, 720p)'), true, 'latest quick command card wrong');
 
     // Quick command
     await postWebhook(`${base}/webhook`, {
