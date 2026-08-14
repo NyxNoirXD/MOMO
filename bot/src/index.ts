@@ -6,6 +6,8 @@ import { NekoStreamClient } from './nekostream.js';
 import { BotBrain } from './brain.js';
 import { OpenWaClient } from './openwaClient.js';
 import { AdminService } from './admin.js';
+import { UserPrefs } from './prefs.js';
+import { SubscriptionPoller, SubscriptionStore } from './subs.js';
 import { createWebhookHandler } from './webhook.js';
 
 function log(msg: string): void {
@@ -82,9 +84,13 @@ async function main(): Promise<void> {
     config.allowlistEnabled,
     config.broadcastMax,
     config.adminDataFile,
+    config.rateLimitMs,
   );
+  const anilist = new AniListClient(config.searchCacheTtlMs, config.anilistEndpoint);
+  const prefs = new UserPrefs(config.prefDataFile);
+  const subs = new SubscriptionStore(config.subsDataFile);
   const brain = new BotBrain(
-    new AniListClient(config.searchCacheTtlMs, config.anilistEndpoint),
+    anilist,
     new NekoStreamClient(config.nekoBaseUrl),
     config.stateTtlMs,
     config.groupCommandPrefixes,
@@ -96,7 +102,13 @@ async function main(): Promise<void> {
       }
       return registerWebhookOnce(openwa, config.publicUrl, config.webhookSecret);
     },
+    prefs,
+    subs,
   );
+
+  const poller = new SubscriptionPoller(openwa, anilist, subs, log);
+  void poller.check(); // catch up on missed episodes right away
+  setInterval(() => void poller.check(), config.subPollMs);
 
   const app = express();
   app.get('/health', (_req, res) => {
@@ -111,6 +123,8 @@ async function main(): Promise<void> {
     if (config.allowlistEnabled) {
       log('allowlist mode ENFORCED - only allowlisted users are answered');
     }
+    log(`rate limit: ${config.rateLimitMs > 0 ? `${config.rateLimitMs}ms per user` : 'off'}`);
+    log(`subscription poller: every ${config.subPollMs}ms`);
     if (resolveApiKey(config.openwaApiKey)) {
       log('OpenWA API key: configured');
     } else {

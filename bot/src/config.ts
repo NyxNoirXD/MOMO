@@ -18,12 +18,30 @@ export interface Config {
   broadcastMax: number;
   /** Where ban/allow lists persist (JSON). */
   adminDataFile: string;
+  /** Minimum interval between a user's search/download requests (0 = off). */
+  rateLimitMs: number;
+  /** Where per-user language/quality preferences persist (JSON). */
+  prefDataFile: string;
+  /** Where subscriptions persist (JSON). */
+  subsDataFile: string;
+  /** How often the bot checks subscribed anime for new episodes. */
+  subPollMs: number;
 }
 
 function intEnv(name: string, fallback: number): number {
   const raw = process.env[name];
   const parsed = raw === undefined ? NaN : Number.parseInt(raw, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+/** Like intEnv but an explicit 0 is honored (used for "disabled" toggles). */
+function intEnvAllowZero(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === '') {
+    return fallback;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
 function jidsEnv(name: string): string[] {
@@ -56,5 +74,9 @@ export function loadConfig(): Config {
     allowlistEnabled: process.env.ALLOWLIST_ENABLED === 'true',
     broadcastMax: intEnv('BROADCAST_MAX', 20),
     adminDataFile: process.env.ADMIN_DATA_FILE ?? '/app/data/admin.json',
+    rateLimitMs: intEnvAllowZero('RATE_LIMIT_MS', 10_000),
+    prefDataFile: process.env.PREF_DATA_FILE ?? '/app/data/prefs.json',
+    subsDataFile: process.env.SUBS_DATA_FILE ?? '/app/data/subs.json',
+    subPollMs: intEnv('SUB_POLL_MS', 15 * 60 * 1000),
   };
 }

@@ -36,5 +36,9 @@ services:
         value: "600000"
       - key: ADMIN_JIDS
         sync: false # e.g. 628123456789 - enables hidden admin-only commands
+      - key: RATE_LIMIT_MS
+        value: "10000" # per-user request throttle
+      - key: SUB_POLL_MS
+        value: "900000" # subscription poll interval
       - key: LOG_LEVEL
         value: info

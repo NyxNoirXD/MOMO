@@ -27,5 +27,7 @@ services:
       - ADMIN_JIDS=${ADMIN_JIDS:-}
       - ALLOWLIST_ENABLED=${ALLOWLIST_ENABLED:-false}
       - BROADCAST_MAX=${BROADCAST_MAX:-20}
+      - RATE_LIMIT_MS=${RATE_LIMIT_MS:-10000}
+      - SUB_POLL_MS=${SUB_POLL_MS:-900000}
       - LOG_LEVEL=${LOG_LEVEL:-info}
     restart: unless-stopped

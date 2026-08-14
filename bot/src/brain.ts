@@ -3,6 +3,8 @@ import type { NekoResult, NekoStreamClient } from './nekostream.js';
 import { NekoError } from './nekostream.js';
 import type { AdminService } from './admin.js';
 import type { OpenWaClient } from './openwaClient.js';
+import type { UserPrefs } from './prefs.js';
+import type { SubscriptionStore } from './subs.js';
 import {
   LANGS,
   Lang,
@@ -13,6 +15,7 @@ import {
   episodeLabel,
   episodePrompt,
   helpText,
+  infoCard,
   isLang,
   isQuality,
   langPrompt,
@@ -20,10 +23,14 @@ import {
   normalizeLang,
   normalizeQuality,
   parseEpisodes,
+  prefText,
   qualityPrompt,
   searchList,
   statsText,
   statusText,
+  subConfirm,
+  subsList,
+  unsubConfirm,
 } from './format.js';
 
 type Step = 'idle' | 'awaiting_pick' | 'awaiting_episode' | 'awaiting_lang' | 'awaiting_quality';
@@ -38,6 +45,8 @@ interface FlowState {
   anime?: AnimeMatch;
   episodes?: EpisodeSpec;
   lang?: Lang;
+  /** True when a `sub <title>` search is awaiting its pick. */
+  subscribe?: boolean;
   updatedAt: number;
 }
 
@@ -71,6 +80,8 @@ export class BotBrain {
     private readonly admin?: AdminService,
     private readonly openwa?: OpenWaClient,
     private readonly reloadWebhook?: () => Promise<string>,
+    private readonly prefs?: UserPrefs,
+    private readonly subs?: SubscriptionStore,
   ) {
     this.prefixes = groupCommandPrefixes;
     const unique = [...new Set(groupCommandPrefixes)];
@@ -116,7 +127,7 @@ export class BotBrain {
     // Everything else is ignored.
     if (msg.isGroup && !hasPrefix) {
       if (state && state.step !== 'idle' && isAdvanceInput(state, raw)) {
-        return this.advance(stateKey, state, raw);
+        return this.advance(stateKey, state, raw, senderJid);
       }
       return null;
     }
@@ -129,34 +140,77 @@ export class BotBrain {
       return { text: 'Cancelled. Send an anime name to start over, or *help*.' };
     }
 
+    const prefCmd = parsePref(stripped);
+    if (prefCmd) {
+      if (!this.prefs) {
+        return { text: 'Preferences unavailable.' };
+      }
+      if (prefCmd.clear) {
+        this.prefs.set(senderJid, {});
+        return { text: 'Cleared your preferences.' };
+      }
+      this.prefs.set(senderJid, prefCmd.patch);
+      return { text: prefText(this.prefs.get(senderJid)) };
+    }
+
+    const infoMatch = stripped.match(/^info\s+(.+)$/i);
+    if (infoMatch) {
+      return this.runInfo(stateKey, infoMatch[1].trim());
+    }
+
+    const subMatch = stripped.match(/^sub\s+(.+)$/i);
+    if (subMatch) {
+      if (!this.subs) {
+        return { text: 'Subscriptions unavailable.' };
+      }
+      return this.runSearch(stateKey, subMatch[1].trim(), undefined, senderJid, { subscribe: true });
+    }
+    if (lower === 'subs') {
+      if (!this.subs) {
+        return { text: 'Subscriptions unavailable.' };
+      }
+      return { text: subsList(this.subs.listForChat(msg.chatId)) };
+    }
+    const unsubMatch = stripped.match(/^unsub\s+(\d+)$/i);
+    if (unsubMatch && this.subs) {
+      const entries = this.subs.listForChat(msg.chatId);
+      const index = Number.parseInt(unsubMatch[1], 10) - 1;
+      const entry = entries[index];
+      if (!entry) {
+        return { text: `No subscription #${unsubMatch[1]}. Use *subs* to list them.` };
+      }
+      this.subs.remove(entry);
+      return { text: unsubConfirm(entry.title) };
+    }
+
     const quick = parseQuick(stripped);
     if (quick) {
       if (quick.error) {
         return { text: quick.error };
       }
-      return this.runSearch(stateKey, quick.query, quick.episodes);
+      return this.runSearch(stateKey, quick.query, quick.episodes, senderJid);
     }
 
     if (state && state.step !== 'idle') {
       if (isAdvanceInput(state, raw)) {
-        return this.advance(stateKey, state, raw);
+        return this.advance(stateKey, state, raw, senderJid);
       }
       if (msg.isGroup) {
         return null;
       }
       // DM mid-flow: step-shaped tokens at the wrong step get a nudge, anything
       // else (e.g. a new anime name) restarts the flow as a fresh search.
-      if (/^\d+$/.test(raw) || /^\d+\s*-\s*\d+$/.test(raw) || isLang(raw) || isQuality(raw)) {
-        return this.advance(stateKey, state, raw);
+      if (/^[\d\s,-]+$/.test(raw) || isLang(raw) || isQuality(raw)) {
+        return this.advance(stateKey, state, raw, senderJid);
       }
-      return this.runSearch(stateKey, raw, undefined);
+      return this.runSearch(stateKey, raw, undefined, senderJid);
     }
 
     if (msg.isGroup) {
       return null;
     }
 
-    return this.runSearch(stateKey, raw, undefined);
+    return this.runSearch(stateKey, raw, undefined, senderJid);
   }
 
   private async handleAdmin(stripped: string): Promise<BotReply | null> {
@@ -257,7 +311,20 @@ export class BotBrain {
     this.anilist.flush();
   }
 
-  private async runSearch(chatId: string, query: string, spec: EpisodeSpec | undefined): Promise<BotReply> {
+  private async runSearch(
+    chatId: string,
+    query: string,
+    spec: EpisodeSpec | undefined,
+    senderJid: string,
+    opts: { subscribe?: boolean } = {},
+  ): Promise<BotReply> {
+    // Per-user throttle: admins and the subscription flow are exempt.
+    if (!opts.subscribe && this.admin) {
+      const wait = this.admin.allowRequest(senderJid);
+      if (wait > 0) {
+        return { text: `Slow down - one request per ${Math.ceil(this.admin.rateLimitSec())}s. Try again in ~${wait}s.` };
+      }
+    }
     this.admin?.recordSearch(query);
     let results: AnimeMatch[];
     try {
@@ -272,22 +339,28 @@ export class BotBrain {
     }
     if (results.length === 1) {
       const anime = results[0];
+      if (opts.subscribe) {
+        return this.subscribeTo(chatId, anime);
+      }
       if (spec !== undefined) {
         const resolved = resolveEpisodes(spec, anime);
         if ('error' in resolved) {
           return { text: resolved.error };
         }
-        this.states.set(chatId, { step: 'awaiting_lang', query, results, anime, episodes: resolved.episodes, updatedAt: Date.now() });
-        return { text: langPrompt(anime, resolved.episodes) };
+        return this.episodeChosen(
+          chatId,
+          { step: 'awaiting_episode', query, results, anime, episodes: resolved.episodes, updatedAt: Date.now() },
+          senderJid,
+        );
       }
       this.states.set(chatId, { step: 'awaiting_episode', query, results, anime, updatedAt: Date.now() });
       return { text: episodePrompt(anime) };
     }
-    this.states.set(chatId, { step: 'awaiting_pick', query, results, episodes: spec, updatedAt: Date.now() });
+    this.states.set(chatId, { step: 'awaiting_pick', query, results, episodes: spec, subscribe: opts.subscribe || undefined, updatedAt: Date.now() });
     return { text: searchList(query, results) };
   }
 
-  private async advance(chatId: string, state: FlowState, raw: string): Promise<BotReply> {
+  private async advance(chatId: string, state: FlowState, raw: string, senderJid: string): Promise<BotReply> {
     if (state.step === 'awaiting_pick') {
       const number = Number.parseInt(raw, 10);
       if (!/^\d+$/.test(raw) || !Number.isFinite(number)) {
@@ -299,13 +372,19 @@ export class BotBrain {
           text: `Pick a number between *1* and *${state.results.length}*, or *cancel*.`,
         };
       }
+      if (state.subscribe) {
+        return this.subscribeTo(chatId, anime);
+      }
       if (state.episodes !== undefined) {
         const resolved = resolveEpisodes(state.episodes, anime);
         if ('error' in resolved) {
           return { text: resolved.error };
         }
-        this.states.set(chatId, { ...state, step: 'awaiting_lang', anime, episodes: resolved.episodes, updatedAt: Date.now() });
-        return { text: langPrompt(anime, resolved.episodes) };
+        return this.episodeChosen(
+          chatId,
+          { ...state, anime, episodes: resolved.episodes, updatedAt: Date.now() },
+          senderJid,
+        );
       }
       this.states.set(chatId, { ...state, step: 'awaiting_episode', anime, updatedAt: Date.now() });
       return { text: episodePrompt(anime) };
@@ -317,8 +396,7 @@ export class BotBrain {
       if ('error' in parsed) {
         return { text: parsed.error };
       }
-      this.states.set(chatId, { ...state, step: 'awaiting_lang', episodes: parsed.episodes, updatedAt: Date.now() });
-      return { text: langPrompt(state.anime!, parsed.episodes) };
+      return this.episodeChosen(chatId, { ...state, episodes: parsed.episodes, updatedAt: Date.now() }, senderJid);
     }
     if (state.step === 'awaiting_lang') {
       const number = Number.parseInt(raw, 10);
@@ -344,6 +422,63 @@ export class BotBrain {
     }
     this.states.delete(chatId);
     return { text: 'What?' }; // unreachable: advance() is only called with a live non-idle state
+  }
+
+  /**
+   * Episodes are known; skip to the language/quality steps unless the user's
+   * preferences already pin them down (then go straight to the final card).
+   */
+  private async episodeChosen(chatId: string, state: FlowState, senderJid: string): Promise<BotReply> {
+    const anime = state.anime!;
+    const episodes = Array.isArray(state.episodes) ? state.episodes : [];
+    const pref = this.prefs?.get(senderJid);
+    if (pref?.lang && pref.quality) {
+      return this.finish(chatId, { ...state, lang: pref.lang }, pref.quality);
+    }
+    if (pref?.lang) {
+      this.states.set(chatId, { ...state, step: 'awaiting_quality', lang: pref.lang, updatedAt: Date.now() });
+      return { text: qualityPrompt(anime, episodes) };
+    }
+    this.states.set(chatId, { ...state, step: 'awaiting_lang', updatedAt: Date.now() });
+    return { text: langPrompt(anime, episodes) };
+  }
+
+  private subscribeTo(chatId: string, anime: AnimeMatch): BotReply {
+    if (!this.subs) {
+      return { text: 'Subscriptions unavailable.' };
+    }
+    const latest = resolveEpisodes('latest', anime);
+    const lastEpisode = !('error' in latest) ? latest.episodes[0] : null;
+    this.subs.upsert({
+      chatId,
+      malId: anime.malId,
+      title: anime.title,
+      lastEpisode,
+    });
+    this.states.delete(chatId);
+    return { text: subConfirm(anime.title, lastEpisode) };
+  }
+
+  private async runInfo(chatId: string, title: string): Promise<BotReply> {
+    let results: AnimeMatch[];
+    try {
+      results = await this.anilist.search(title);
+    } catch (err) {
+      return { text: `Search failed: ${errMsg(err)}` };
+    }
+    const anime = results[0];
+    if (!anime) {
+      return { text: `No anime found for *"${title}"*. Try a different name, or *help*.` };
+    }
+    // One reply away from downloading: the next message is treated as the episode step.
+    this.states.set(chatId, {
+      step: 'awaiting_episode',
+      query: title,
+      results,
+      anime,
+      updatedAt: Date.now(),
+    });
+    return { text: infoCard(anime), imageUrl: anime.coverImage };
   }
 
   private async finish(chatId: string, state: FlowState, quality: Quality): Promise<BotReply> {
@@ -414,8 +549,8 @@ function parseQuick(text: string): QuickCommand | null {
   }
   const rest = m[1].trim();
   const withEp =
-    rest.match(/^(.*?)\s+ep(?:isode)?\.?\s+([\d\s-]+|latest|last|newest)$/i) ??
-    rest.match(/^(.*?)\s+([\d\s-]+|latest|last|newest)$/i);
+    rest.match(/^(.*?)\s+ep(?:isode)?\.?\s+([\d\s,-]+|latest|last|newest)$/i) ??
+    rest.match(/^(.*?)\s+([\d\s,-]+|latest|last|newest)$/i);
   if (withEp) {
     const query = withEp[1].trim();
     if (!query) {
@@ -454,7 +589,7 @@ function isAdvanceInput(state: FlowState, raw: string): boolean {
     return /^\d+$/.test(t);
   }
   if (state.step === 'awaiting_episode') {
-    return /^\d+$/.test(t) || /^\d+\s*-\s*\d+$/.test(t) || /^(latest|last|newest)$/i.test(t);
+    return /^[\d\s,-]+$/.test(t) || /^(latest|last|newest)$/i.test(t);
   }
   if (state.step === 'awaiting_lang') {
     return isLang(t) || /^[12]$/.test(t);
@@ -467,4 +602,38 @@ function isAdvanceInput(state: FlowState, raw: string): boolean {
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+interface PrefCommand {
+  patch: Partial<{ lang: Lang; quality: Quality }>;
+  clear?: boolean;
+}
+
+function parsePref(text: string): PrefCommand | null {
+  const m = text.match(/^pref(?:\s+(.+))?$/i);
+  if (!m) {
+    return null;
+  }
+  const rest = m[1]?.trim().toLowerCase() ?? '';
+  if (!rest) {
+    return { patch: {} }; // bare "pref" just shows the current values
+  }
+  if (rest === 'none' || rest === 'clear' || rest === 'reset') {
+    return { patch: {}, clear: true };
+  }
+  const tokens = rest.split(/\s+/).filter(Boolean);
+  if (tokens.length > 2) {
+    return null;
+  }
+  const patch: PrefCommand['patch'] = {};
+  for (const token of tokens) {
+    if (isLang(token)) {
+      patch.lang = normalizeLang(token);
+    } else if (isQuality(token)) {
+      patch.quality = normalizeQuality(token);
+    } else {
+      return null;
+    }
+  }
+  return { patch };
 }

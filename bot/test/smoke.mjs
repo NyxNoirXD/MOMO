@@ -85,15 +85,24 @@ async function startOpenwaStub() {
 }
 
 function startAnilistStub() {
-  const server = jsonServer(async (req) => {
+  const server = jsonServer(async (req, parsed) => {
     if (req.method === 'POST' && req.url === '/') {
+      if (parsed.query?.includes('Media(idMal')) {
+        return {
+          body: {
+            data: {
+              Media: { episodes: 12, nextAiringEpisode: { episode: 9 } },
+            },
+          },
+        };
+      }
       return {
         body: {
           data: {
             Page: {
               media: [
-                { id: 1, idMal: 61316, title: { romaji: 'Re:Zero Season 4', english: 'Re:Zero' }, episodes: 12, format: 'TV', startDate: { year: 2016 }, nextAiringEpisode: { episode: 8 }, coverImage: { large: 'https://img.test/cover-rezero.jpg' } },
-                { id: 2, idMal: 99999, title: { romaji: 'Re:Zero The Movie', english: null }, episodes: 1, format: 'MOVIE', startDate: { year: 2019 }, coverImage: { large: 'https://img.test/cover-movie.jpg' } },
+                { id: 1, idMal: 61316, title: { romaji: 'Re:Zero Season 4', english: 'Re:Zero' }, episodes: 12, format: 'TV', status: 'RELEASING', startDate: { year: 2016 }, nextAiringEpisode: { episode: 8 }, coverImage: { large: 'https://img.test/cover-rezero.jpg' }, synopsis: 'A boy gets reincarnated into a fantasy world.', meanScore: 90, duration: 25, genres: ['Drama', 'Fantasy'], studios: { nodes: [{ name: 'White Fox' }] } },
+                { id: 2, idMal: 99999, title: { romaji: 'Re:Zero The Movie', english: null }, episodes: 1, format: 'MOVIE', status: 'FINISHED', startDate: { year: 2019 }, coverImage: { large: 'https://img.test/cover-movie.jpg' } },
               ],
             },
           },
@@ -144,7 +153,9 @@ async function postWebhook(url, envelope) {
 }
 
 async function main() {
-  fs.rmSync(ADMIN_DATA_FILE, { force: true });
+  for (const f of [ADMIN_DATA_FILE, path.join(os.tmpdir(), 'momo-smoke-prefs.json'), path.join(os.tmpdir(), 'momo-smoke-subs.json'), path.join(os.tmpdir(), 'momo-smoke-admin2.json')]) {
+    fs.rmSync(f, { force: true });
+  }
   const openwa = await startOpenwaStub();
   const anilist = startAnilistStub();
   const neko = startNekoStub();
@@ -163,6 +174,10 @@ async function main() {
       SEARCH_CACHE_TTL_MS: '60000',
       ADMIN_JIDS: '62811112222',
       ADMIN_DATA_FILE,
+      PREF_DATA_FILE: path.join(os.tmpdir(), 'momo-smoke-prefs.json'),
+      SUBS_DATA_FILE: path.join(os.tmpdir(), 'momo-smoke-subs.json'),
+      RATE_LIMIT_MS: '0',
+      SUB_POLL_MS: '1000',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -313,6 +328,62 @@ async function main() {
     });
     assert.equal(sent.at(-1).text.includes('Max *24* episodes per request'), true, 'oversized range not rejected');
 
+    // Multi-episode lists: 1,3,5 and mixed 1-2,4
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_list_1',
+      data: { id: 'wa_list_1', from: '1234@c.us', to: '9999@c.us', body: 'd re zero 1,3,5', type: 'text', timestamp: 2, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    assert.equal(sent.at(-1).text.includes('Matches for "re zero"'), true, 'list quick command did not search');
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_list_2',
+      data: { id: 'wa_list_2', from: '1234@c.us', to: '9999@c.us', body: '1', type: 'text', timestamp: 2, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    assert.equal(sent.at(-1).text.includes('Episodes 1-5 (3)'), true, 'list did not reach language prompt with label');
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_list_3',
+      data: { id: 'wa_list_3', from: '1234@c.us', to: '9999@c.us', body: 'sub', type: 'text', timestamp: 2, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_list_4',
+      data: { id: 'wa_list_4', from: '1234@c.us', to: '9999@c.us', body: '720p', type: 'text', timestamp: 2, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    const listCard = sentImages.at(-1).caption;
+    assert.equal(listCard.includes('Episodes 1-5 (sub, 720p)'), true, 'list card header missing');
+    assert.equal(listCard.includes('Ep 1: https://pahe.test/k2'), true, 'list card missing ep 1');
+    assert.equal(listCard.includes('Ep 3: https://pahe.test/k2'), true, 'list card missing ep 3');
+    assert.equal(listCard.includes('Ep 5: https://pahe.test/k2'), true, 'list card missing ep 5');
+    assert.equal(listCard.includes('Ep 2: https://pahe.test/k2'), false, 'list card leaked unselected ep 2');
+
+    // Mixed list in the flow: 1-2,4
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_list_5',
+      data: { id: 'wa_list_5', from: '1234@c.us', to: '9999@c.us', body: 're zero', type: 'text', timestamp: 2, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_list_6',
+      data: { id: 'wa_list_6', from: '1234@c.us', to: '9999@c.us', body: '1', type: 'text', timestamp: 2, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_list_7',
+      data: { id: 'wa_list_7', from: '1234@c.us', to: '9999@c.us', body: '1-2,4', type: 'text', timestamp: 2, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    assert.equal(sent.at(-1).text.includes('Episodes 1-4 (3)'), true, 'mixed list did not reach language prompt');
+
+    // Oversized list rejected (even after dedupe)
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_list_8',
+      data: { id: 'wa_list_8', from: '1234@c.us', to: '9999@c.us', body: 'd re zero 1-25,1-5', type: 'text', timestamp: 2, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    assert.equal(sent.at(-1).text.includes('Max *24* episodes per request'), true, 'oversized list not rejected');
+
     // 'latest' in the quick command resolves via nextAiringEpisode (ep 8 -> latest 7)
     await postWebhook(`${base}/webhook`, {
       event: 'message.received',
@@ -391,6 +462,32 @@ async function main() {
     });
     assert.equal(sent.at(-1).text.includes('Episode 2 (sub, 720p)'), true, 'fallback card missing');
     failImages = false;
+
+    // Quality fallback: Kiwi has 1080p, gogoanime only 720p -> annotated fallback
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_fb_1',
+      data: { id: 'wa_fb_1', from: '1234@c.us', to: '9999@c.us', body: 'd re zero 1', type: 'text', timestamp: 6, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_fb_2',
+      data: { id: 'wa_fb_2', from: '1234@c.us', to: '9999@c.us', body: '1', type: 'text', timestamp: 6, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_fb_3',
+      data: { id: 'wa_fb_3', from: '1234@c.us', to: '9999@c.us', body: 'sub', type: 'text', timestamp: 6, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_fb_4',
+      data: { id: 'wa_fb_4', from: '1234@c.us', to: '9999@c.us', body: '1080p', type: 'text', timestamp: 6, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    const fbCard = sentImages.at(-1).caption;
+    assert.equal(fbCard.includes('*sub* 1080p: https://pahe.test/k3'), true, 'kiwi 1080p missing in fallback card');
+    assert.equal(fbCard.includes('fell back'), true, 'fallback annotation missing');
+    assert.equal(fbCard.includes('1080p unavailable for some links'), true, 'fallback note missing');
 
     // Group flow: commands need a prefix, bare text ignored
     const before = sent.length;
@@ -571,6 +668,104 @@ async function main() {
     });
     assert.equal(sent.at(-1).text.includes('broadcast'), false, 'help leaks admin commands');
 
+    // info <title>: details card with cover, then an episode reply starts the flow
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_info_1',
+      data: { id: 'wa_info_1', from: '1234@c.us', to: '9999@c.us', body: 'info re zero', type: 'text', timestamp: 8, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    const infoImg = sentImages.at(-1);
+    assert.equal(infoImg.caption.includes('Re:Zero Season 4'), true, 'info card title missing');
+    assert.equal(infoImg.caption.includes('⭐ 90/100'), true, 'info card score missing');
+    assert.equal(infoImg.caption.includes('White Fox'), true, 'info card studio missing');
+    assert.equal(infoImg.caption.includes('episode number'), true, 'info card download hint missing');
+    assert.equal(infoImg.media.url, 'https://img.test/cover-rezero.jpg', 'info card cover missing');
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_info_2',
+      data: { id: 'wa_info_2', from: '1234@c.us', to: '9999@c.us', body: '5', type: 'text', timestamp: 8, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    assert.equal(sent.at(-1).text.includes('Choose *language*'), true, 'info did not hand off to download flow');
+
+    // User preferences: pref sub 720p makes the flow skip lang/quality steps
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_pref_1',
+      data: { id: 'wa_pref_1', from: '1234@c.us', to: '9999@c.us', body: 'pref sub 720p', type: 'text', timestamp: 8, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    assert.equal(sent.at(-1).text.includes('Language: *sub*'), true, 'pref reply missing language');
+    assert.equal(sent.at(-1).text.includes('Quality: *720p*'), true, 'pref reply missing quality');
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_pref_2',
+      data: { id: 'wa_pref_2', from: '1234@c.us', to: '9999@c.us', body: 'd re zero 2', type: 'text', timestamp: 8, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_pref_3',
+      data: { id: 'wa_pref_3', from: '1234@c.us', to: '9999@c.us', body: '1', type: 'text', timestamp: 8, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    assert.equal(sentImages.at(-1).caption.includes('Episode 2 (sub, 720p)'), true, 'prefs did not skip lang/quality steps');
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_pref_4',
+      data: { id: 'wa_pref_4', from: '1234@c.us', to: '9999@c.us', body: 'pref', type: 'text', timestamp: 8, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    assert.equal(sent.at(-1).text.includes('Language: *sub*'), true, 'pref status missing');
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_pref_5',
+      data: { id: 'wa_pref_5', from: '1234@c.us', to: '9999@c.us', body: 'pref none', type: 'text', timestamp: 8, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    assert.equal(sent.at(-1).text.includes('Cleared your preferences'), true, 'pref clear missing');
+
+    // Subscriptions: sub -> pick -> confirm, subs list, poller alert, unsub
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_sub_1',
+      data: { id: 'wa_sub_1', from: '1234@c.us', to: '9999@c.us', body: 'sub re zero', type: 'text', timestamp: 8, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    assert.equal(sent.at(-1).text.includes('Matches for "re zero"'), true, 'sub did not search');
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_sub_2',
+      data: { id: 'wa_sub_2', from: '1234@c.us', to: '9999@c.us', body: '1', type: 'text', timestamp: 8, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    const subConfirmText = sent.at(-1).text;
+    assert.equal(subConfirmText.includes('Subscribed to *Re:Zero Season 4*'), true, 'sub confirm missing');
+    assert.equal(subConfirmText.includes('episode 7'), true, 'sub confirm latest episode wrong');
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_sub_3',
+      data: { id: 'wa_sub_3', from: '1234@c.us', to: '9999@c.us', body: 'subs', type: 'text', timestamp: 8, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    const subsMsg = [...sent].reverse().find((m) => m.text?.includes('Subscriptions for this chat'));
+    assert.equal(subsMsg?.text.includes('1. *Re:Zero Season 4*'), true, 'subs list missing entry');
+
+    // The poller (SUB_POLL_MS=1000) notices the stub airing info moved to ep 9 (latest 8)
+    const alertDeadline = Date.now() + 8000;
+    let subAlert = null;
+    while (Date.now() < alertDeadline) {
+      subAlert = sent.find((m) => m.chatId === '1234@c.us' && m.text?.includes('New episode alert') && m.text.includes('Episode 8'));
+      if (subAlert) break;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    assert.equal(subAlert !== null, true, 'subscription alert never arrived');
+    assert.equal(subAlert.text.includes('d Re:Zero Season 4 8'), true, 'alert download hint missing');
+
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_sub_4',
+      data: { id: 'wa_sub_4', from: '1234@c.us', to: '9999@c.us', body: 'unsub 1', type: 'text', timestamp: 8, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    assert.equal(sent.at(-1).text.includes('Removed *Re:Zero Season 4*'), true, 'unsub confirm missing');
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_sub_5',
+      data: { id: 'wa_sub_5', from: '1234@c.us', to: '9999@c.us', body: 'subs', type: 'text', timestamp: 8, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    assert.equal(sent.at(-1).text.includes('No subscriptions'), true, 'subs list not empty after unsub');
+
     // Bad signature rejected
     const bad = Buffer.from(JSON.stringify({ event: 'message.received', data: { body: 'x' } }));
     const res = await fetch(`${base}/webhook`, {
@@ -580,9 +775,60 @@ async function main() {
     });
     assert.equal(res.status, 401, 'bad signature accepted');
 
-    // Webhook auto-registration happened
+    // --- Rate limiting: second bot instance with RATE_LIMIT_MS=3000 ---
+    const BOT2_PORT = 3302;
+    const bot2 = spawn('node', [BOT_ENTRY], {
+      env: {
+        ...process.env,
+        BOT_PORT: String(BOT2_PORT),
+        OPENWA_URL: `http://127.0.0.1:${OPENWA_PORT}`,
+        OPENWA_API_KEY: 'test-key',
+        WEBHOOK_SECRET: SECRET,
+        OPENWA_PUBLIC_URL: `http://127.0.0.1:${BOT2_PORT}`,
+        ANILIST_ENDPOINT: `http://127.0.0.1:${ANILIST_PORT}/`,
+        NEKO_BASE_URL: `http://127.0.0.1:${NEKO_PORT}`,
+        SEARCH_CACHE_TTL_MS: '60000',
+        RATE_LIMIT_MS: '3000',
+        ADMIN_DATA_FILE: path.join(os.tmpdir(), 'momo-smoke-admin2.json'),
+        PREF_DATA_FILE: path.join(os.tmpdir(), 'momo-smoke-prefs2.json'),
+        SUBS_DATA_FILE: path.join(os.tmpdir(), 'momo-smoke-subs2.json'),
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    try {
+      const base2 = `http://127.0.0.1:${BOT2_PORT}`;
+      for (let i = 0; i < 50; i++) {
+        try {
+          const r = await fetch(`${base2}/health`);
+          if (r.ok) break;
+        } catch {
+          /* not up yet */
+        }
+        await new Promise((r) => setTimeout(r, 200));
+      }
+      await postWebhook(`${base2}/webhook`, {
+        event: 'message.received',
+        idempotencyKey: 'msg_rl_1',
+        data: { id: 'wa_rl_1', from: '7777@c.us', to: '9999@c.us', body: 're zero', type: 'text', timestamp: 9, isGroup: false, kind: 'individual', fromMe: false },
+      });
+      assert.equal(sent.at(-1).text.includes('Matches for "re zero"'), true, 'rate-limited first request failed');
+      await postWebhook(`${base2}/webhook`, {
+        event: 'message.received',
+        idempotencyKey: 'msg_rl_2',
+        data: { id: 'wa_rl_2', from: '7777@c.us', to: '9999@c.us', body: 'one piece', type: 'text', timestamp: 9, isGroup: false, kind: 'individual', fromMe: false },
+      });
+      assert.equal(sent.at(-1).text.includes('Slow down'), true, 'rate limiter did not block second request');
+    } finally {
+      bot2.kill('SIGKILL');
+    }
+
+    // Webhook auto-registration happened (either bot instance)
     assert.equal(webhookRegistrations.length >= 1, true, 'webhook auto-registration missing');
-    assert.equal(webhookRegistrations.at(-1).url, `http://127.0.0.1:${BOT_PORT}/webhook`);
+    assert.equal(
+      webhookRegistrations.some((w) => w.url === `http://127.0.0.1:${BOT_PORT}/webhook`),
+      true,
+      'main bot webhook not registered',
+    );
 
     console.log('\nSMOKE TEST PASSED: all assertions green');
     passed = true;

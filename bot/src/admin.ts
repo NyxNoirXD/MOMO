@@ -27,12 +27,14 @@ export class AdminService {
   private searches = new Map<string, number>();
   private downloads = new Map<string, number>();
   private errors = new Map<string, number>();
+  private lastRequestAt = new Map<string, number>();
 
   constructor(
     private readonly adminJids: string[],
     private readonly allowlistEnabled: boolean,
     private readonly broadcastMax: number,
     private readonly dataFile: string,
+    private readonly rateLimitMs = 0,
   ) {
     this.load();
   }
@@ -147,6 +149,37 @@ export class AdminService {
 
   broadcastCap(): number {
     return this.broadcastMax;
+  }
+
+  /**
+   * Per-user request throttle. Returns the seconds left until the next request
+   * is allowed, or 0 if the request may proceed (and it is recorded).
+   */
+  allowRequest(jid: string): number {
+    if (this.rateLimitMs <= 0) {
+      return 0;
+    }
+    const key = normalizeJid(jid);
+    const now = Date.now();
+    const last = this.lastRequestAt.get(key);
+    if (last !== undefined) {
+      const waitMs = this.rateLimitMs - (now - last);
+      if (waitMs > 0) {
+        return Math.ceil(waitMs / 1000);
+      }
+    }
+    this.lastRequestAt.set(key, now);
+    if (this.lastRequestAt.size > 5000) {
+      const oldest = this.lastRequestAt.keys().next().value;
+      if (oldest !== undefined) {
+        this.lastRequestAt.delete(oldest);
+      }
+    }
+    return 0;
+  }
+
+  rateLimitSec(): number {
+    return Math.ceil(this.rateLimitMs / 1000);
   }
 
   private load(): void {

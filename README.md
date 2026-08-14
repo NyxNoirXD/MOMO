@@ -109,10 +109,22 @@ See [.env.example](.env.example) for the full list with comments.
 | `<anime name>` (DM) | Search and start the pick flow |
 | `<number>` | Select match / episode / quality (depends on flow step) |
 | `5-8` | Episode range (max 24 episodes per request) |
+| `1,3,5-8` | Episode list, mixing single numbers and ranges (max 24) |
 | `latest` | Newest episode (at the episode step) |
 | `sub` / `dub` | Language choice (one per request - prevents link flooding) |
-| `360p` / `720p` / `1080p` | Quality choice |
+| `360p` / `720p` / `1080p` | Quality choice (missing quality auto-falls back to the nearest lower one, noted in the card) |
+| `info <anime>` | Details card (score, synopsis, studio) - then reply with an episode to download |
+| `sub <anime>` | Subscribe this chat; the bot pings when a new episode drops |
+| `subs` / `unsub <n>` | List / remove subscriptions for this chat |
+| `pref` | Show your default language/quality; `pref sub 720p` sets them (flow skips those steps), `pref none` clears |
 | `cancel` | Abort the current flow |
+
+**User preferences** (`pref`) are saved per sender (even in groups) to
+`PREF_DATA_FILE` (default `/app/data/prefs.json`). **Subscriptions** are per chat,
+persisted to `SUBS_DATA_FILE` (default `/app/data/subs.json`); the bot polls AniList
+every `SUB_POLL_MS` (default 15 min) and alerts subscribed chats about new episodes.
+**Rate limiting**: `RATE_LIMIT_MS` (default 10 s) throttles per-user requests so a
+public bot can't be spammed into flooding the download API.
 
 **In groups** the bot only responds to prefixed commands (`/help`, `!d one piece 1087`,
 `/cancel`) — bare anime names and messages are ignored so it doesn't spam chat. The

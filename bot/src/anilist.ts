@@ -10,6 +10,15 @@ export interface AnimeMatch {
   /** nextAiringEpisode.episode if the show is currently airing. */
   nextAiringEpisode?: number;
   coverImage?: string;
+  synopsis?: string;
+  /** AniList mean score, 0-100. */
+  meanScore?: number;
+  /** Media status: FINISHED, RELEASING, NOT_YET_RELEASED, CANCELLED, HIATUS. */
+  status?: string;
+  /** Episode length in minutes. */
+  duration?: number;
+  genres?: string[];
+  studios?: string[];
 }
 
 const SEARCH_QUERY = `
@@ -25,7 +34,20 @@ query ($search: String) {
       startDate { year }
       nextAiringEpisode { episode }
       coverImage { large }
+      synopsis
+      meanScore
+      duration
+      genres
+      studios { nodes { name } }
     }
+  }
+}`;
+
+const AIRING_QUERY = `
+query ($idMal: Int) {
+  Media(idMal: $idMal, type: ANIME) {
+    episodes
+    nextAiringEpisode { episode }
   }
 }`;
 
@@ -97,6 +119,14 @@ export class AniListClient {
         year: (m.startDate as { year?: number | null } | null)?.year ?? undefined,
         nextAiringEpisode: (m.nextAiringEpisode as { episode?: number } | null)?.episode,
         coverImage: (m.coverImage as { large?: string } | null)?.large,
+        synopsis: typeof m.synopsis === 'string' ? m.synopsis : undefined,
+        meanScore: m.meanScore == null ? undefined : Number(m.meanScore),
+        status: typeof m.status === 'string' ? m.status : undefined,
+        duration: m.duration == null ? undefined : Number(m.duration),
+        genres: Array.isArray(m.genres) ? m.genres.map(String).filter(Boolean) : undefined,
+        studios: Array.isArray((m.studios as { nodes?: unknown } | null)?.nodes)
+          ? (m.studios as { nodes?: Array<{ name?: string }> }).nodes!.map((s) => s.name ?? '').filter(Boolean)
+          : undefined,
       };
       seen.add(malId);
       results.push(match);
@@ -115,5 +145,30 @@ export class AniListClient {
 
   flush(): void {
     this.cache.clear();
+  }
+
+  /** Latest-episode facts for a single MAL id (used by the subscription poller). */
+  async airingInfo(malId: number): Promise<{ episodes?: number; nextAiringEpisode?: number } | null> {
+    const res = await fetch(this.endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ query: AIRING_QUERY, variables: { idMal: malId } }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`AniList airing lookup failed (${res.status}): ${text.slice(0, 200)}`);
+    }
+    const json = (await res.json()) as {
+      data?: { Media?: { episodes?: unknown; nextAiringEpisode?: { episode?: unknown } | null } | null };
+    };
+    const media = json.data?.Media;
+    if (!media) {
+      return null;
+    }
+    return {
+      episodes: media.episodes == null ? undefined : Number(media.episodes),
+      nextAiringEpisode: media.nextAiringEpisode?.episode == null ? undefined : Number(media.nextAiringEpisode.episode),
+    };
   }
 }
