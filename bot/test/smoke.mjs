@@ -19,7 +19,9 @@ const ANILIST_PORT = 3391;
 const NEKO_PORT = 3392;
 
 const sent = [];
+const sentImages = [];
 const webhookRegistrations = [];
+let failImages = false;
 
 function jsonServer(handler) {
   return http.createServer(async (req, res) => {
@@ -47,6 +49,13 @@ async function startOpenwaStub() {
       sent.push(parsed);
       return { status: 201, body: { messageId: 'wa_msg_1', timestamp: 1719312000 } };
     }
+    if (req.method === 'POST' && url.endsWith('/messages/send-image')) {
+      sentImages.push(parsed);
+      if (failImages) {
+        return { status: 500, body: { error: 'image upload failed' } };
+      }
+      return { status: 201, body: { messageId: 'wa_img_1', timestamp: 1719312000 } };
+    }
     if (req.method === 'GET' && url.endsWith('/webhooks')) {
       return { body: [] };
     }
@@ -72,8 +81,8 @@ function startAnilistStub() {
           data: {
             Page: {
               media: [
-                { id: 1, idMal: 61316, title: { romaji: 'Re:Zero Season 4', english: 'Re:Zero' }, episodes: 12, format: 'TV' },
-                { id: 2, idMal: 99999, title: { romaji: 'Re:Zero The Movie', english: null }, episodes: 1, format: 'MOVIE' },
+                { id: 1, idMal: 61316, title: { romaji: 'Re:Zero Season 4', english: 'Re:Zero' }, episodes: 12, format: 'TV', coverImage: { large: 'https://img.test/cover-rezero.jpg' } },
+                { id: 2, idMal: 99999, title: { romaji: 'Re:Zero The Movie', english: null }, episodes: 1, format: 'MOVIE', coverImage: { large: 'https://img.test/cover-movie.jpg' } },
               ],
             },
           },
@@ -208,12 +217,19 @@ async function main() {
       idempotencyKey: 'msg_5',
       data: { id: 'wa_5', from: '1234@c.us', to: '9999@c.us', body: '720p', type: 'text', timestamp: 5, isGroup: false, kind: 'individual', fromMe: false },
     });
-    const card = sent.at(-1).text;
+    const card = sentImages.at(-1).caption;
     assert.equal(card.includes('Episode 1 (sub, 720p)'), true, 'card header missing');
     assert.equal(card.includes('https://pahe.test/k2'), true, 'Kiwi sub 720p missing');
     assert.equal(card.includes('https://pahe.test/kd'), false, 'dub link leaked into sub-only card');
     assert.equal(card.includes('https://gogo.test/g1'), true, 'gogoanime 720p missing');
     assert.equal(card.includes('*Kiwi*'), true, 'server header missing');
+
+    // Cover image attached to the final card as caption, quoted reply
+    const img = sentImages.at(-1);
+    assert.equal(img.media.url, 'https://img.test/cover-rezero.jpg', 'cover image url wrong');
+    assert.equal(img.caption.includes('Episode 1 (sub, 720p)'), true, 'cover caption missing card text');
+    assert.equal(img.chatId, '1234@c.us', 'image sent to wrong chat');
+    assert.equal(img.quotedMessageId, 'wa_5', 'image reply not quoted');
 
     // Range in the flow: 5-8 -> sub -> 720p -> one combined card
     await postWebhook(`${base}/webhook`, {
@@ -242,7 +258,7 @@ async function main() {
       idempotencyKey: 'msg_5b',
       data: { id: 'wa_5b', from: '1234@c.us', to: '9999@c.us', body: '720p', type: 'text', timestamp: 5, isGroup: false, kind: 'individual', fromMe: false },
     });
-    const rangeCard = sent.at(-1).text;
+    const rangeCard = sentImages.at(-1).caption;
     assert.equal(rangeCard.includes('Episodes 5-8 (sub, 720p)'), true, 'range card header missing');
     assert.equal(rangeCard.includes('Ep 5: https://pahe.test/k2'), true, 'range card missing ep 5');
     assert.equal(rangeCard.includes('Ep 8: https://pahe.test/k2'), true, 'range card missing ep 8');
@@ -279,10 +295,35 @@ async function main() {
       idempotencyKey: 'msg_6d',
       data: { id: 'wa_6d', from: '1234@c.us', to: '9999@c.us', body: '720p', type: 'text', timestamp: 6, isGroup: false, kind: 'individual', fromMe: false },
     });
-    const dubCard = sent.at(-1).text;
+    const dubCard = sentImages.at(-1).caption;
     assert.equal(dubCard.includes('Episode 1 (dub, 720p)'), true, 'dub card header missing');
     assert.equal(dubCard.includes('https://pahe.test/kd'), true, 'Kiwi dub 720p missing');
     assert.equal(dubCard.includes('https://pahe.test/k2'), false, 'sub link leaked into dub-only card');
+
+    // Image upload failure falls back to a plain text card
+    failImages = true;
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_6e',
+      data: { id: 'wa_6e', from: '1234@c.us', to: '9999@c.us', body: 'd re zero 2', type: 'text', timestamp: 6, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_6f',
+      data: { id: 'wa_6f', from: '1234@c.us', to: '9999@c.us', body: '1', type: 'text', timestamp: 6, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_6g',
+      data: { id: 'wa_6g', from: '1234@c.us', to: '9999@c.us', body: 'sub', type: 'text', timestamp: 6, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_6h',
+      data: { id: 'wa_6h', from: '1234@c.us', to: '9999@c.us', body: '720p', type: 'text', timestamp: 6, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    assert.equal(sent.at(-1).text.includes('Episode 2 (sub, 720p)'), true, 'fallback card missing');
+    failImages = false;
 
     // Group flow: commands need a prefix, bare text ignored
     const before = sent.length;

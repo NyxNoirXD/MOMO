@@ -42,6 +42,8 @@ export interface Incoming {
 
 export interface BotReply {
   text: string;
+  /** Optional cover image to attach to the reply. */
+  imageUrl?: string;
 }
 
 export class BotBrain {
@@ -217,7 +219,7 @@ export class BotBrain {
         ].join('\n'),
       };
     }
-    return { text: linkCard(anime, episodes, lang, quality, fetched, failed) };
+    return { text: linkCard(anime, episodes, lang, quality, fetched, failed), imageUrl: anime.coverImage };
   }
 
   private prune(chatId: string): void {

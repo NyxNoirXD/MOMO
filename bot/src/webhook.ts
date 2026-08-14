@@ -111,7 +111,28 @@ export function createWebhookHandler(
 
     if (reply) {
       try {
-        await openwa.sendText(chatId, reply.text, { quotedMessageId: data.id });
+        const quoted = { quotedMessageId: data.id };
+        const maxCaption = 1024;
+        if (reply.imageUrl) {
+          let caption = reply.text;
+          let extraText: string | undefined;
+          if (caption.length > maxCaption) {
+            const nl = caption.indexOf('\n');
+            caption = nl === -1 ? caption.slice(0, maxCaption) : caption.slice(0, nl);
+            extraText = reply.text;
+          }
+          try {
+            await openwa.sendImage(chatId, reply.imageUrl, caption, quoted);
+            if (extraText) {
+              await openwa.sendText(chatId, extraText, quoted);
+            }
+          } catch (err) {
+            log(`image send failed, falling back to text: ${err instanceof Error ? err.message : String(err)}`);
+            await openwa.sendText(chatId, reply.text, quoted);
+          }
+        } else {
+          await openwa.sendText(chatId, reply.text, quoted);
+        }
       } catch (err) {
         log(`send failed: ${err instanceof Error ? err.message : String(err)}`);
       }

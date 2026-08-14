@@ -53,6 +53,24 @@ export class OpenWaClient {
     });
   }
 
+  async sendImage(
+    chatId: string,
+    url: string,
+    caption: string,
+    opts: SendTextOptions = {},
+  ): Promise<unknown> {
+    const sessionId = await this.resolveSessionId();
+    return this.request(`/api/sessions/${sessionId}/messages/send-image`, {
+      method: 'POST',
+      body: {
+        chatId,
+        media: { url },
+        caption,
+        ...(opts.quotedMessageId ? { quotedMessageId: opts.quotedMessageId } : {}),
+      },
+    });
+  }
+
   async listWebhooks(sessionId?: string): Promise<Array<{ id: string; url: string; active: boolean }>> {
     const id = sessionId ?? (await this.resolveSessionId());
     return (await this.request(`/api/sessions/${id}/webhooks`)) as Array<{
