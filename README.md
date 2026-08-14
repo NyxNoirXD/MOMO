@@ -120,6 +120,32 @@ prefixes are configurable via `GROUP_COMMAND_PREFIXES` (default `/!`); numbers, 
 and sub/dub/quality replies keep advancing an already-started flow. Flows are scoped per
 sender, so no one can hijack another member's download. In DMs prefixes are optional.
 
+## Admin-only commands (hidden)
+
+Set `ADMIN_JIDS` (comma-separated WhatsApp numbers, e.g. `628123456789`) to enable a set
+of admin-only commands. They are **never listed in help** and are **silently ignored** for
+anyone else. Admin commands work in DMs and in groups, with or without a prefix, but are
+only recognized when the *sender* is the admin.
+
+| Command | Behavior |
+|---|---|
+| `status` | Session status from OpenWA (status, phone, push name, connected/last active) |
+| `qr` | Re-link QR as an image (after logout or a stuck session) |
+| `reload` | Re-run webhook auto-registration (one attempt) |
+| `ban <jid>` | Silently ignore a user or group (e.g. `ban 628123456789` or `ban 123-456@g.us`). Admins can't be banned |
+| `unban <jid>` | Remove a ban |
+| `allow <jid>` | Add to the allowlist (and unban) |
+| `deny <jid>` | Remove from the allowlist |
+| `allowlist` | Show allowlist mode + banned/allowlisted JIDs |
+| `stats` | Usage counters: messages, top searches, top downloads, errors, known chats |
+| `flush` | Clear all flow states and the search cache |
+| `broadcast <text>` | Send a message to every chat that has messaged the bot (capped by `BROADCAST_MAX`, default 20) |
+
+Ban/allow lists persist to `ADMIN_DATA_FILE` (default `/app/data/admin.json`, covered by
+the session backup) so they survive restarts. With `ALLOWLIST_ENABLED=true` the bot only
+answers allowlisted users (admins are always allowed) — combine with `allow` to run a
+private bot.
+
 ## Disclaimer
 
 Unofficial WhatsApp automation carries a small risk of account restriction — use a

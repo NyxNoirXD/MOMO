@@ -112,4 +112,8 @@ export class AniListClient {
     }
     return top;
   }
+
+  flush(): void {
+    this.cache.clear();
+  }
 }

@@ -34,5 +34,7 @@ services:
         value: momo
       - key: BOT_STATE_TTL_MS
         value: "600000"
+      - key: ADMIN_JIDS
+        sync: false # e.g. 628123456789 - enables hidden admin-only commands
       - key: LOG_LEVEL
         value: info

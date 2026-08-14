@@ -1,5 +1,6 @@
 import type { AnimeMatch } from './anilist.js';
 import type { NekoResult, NekoServer } from './nekostream.js';
+import type { AdminStats } from './admin.js';
 
 export const QUALITIES = ['360p', '720p', '1080p'] as const;
 export type Quality = (typeof QUALITIES)[number];
@@ -216,4 +217,53 @@ export function linkCard(
 
 function this_linkNote(): string {
   return '_Links can expire; if a link stops working, request the episode again._';
+}
+
+export function statusText(
+  session: {
+    name: string;
+    status: string;
+    phone?: string | null;
+    pushName?: string | null;
+    connectedAt?: string | null;
+    lastActive?: string | null;
+  } | null,
+): string {
+  if (!session) {
+    return '*Session:* not found.';
+  }
+  const rows = [
+    `*Session:* ${session.name}`,
+    `*Status:* ${session.status}`,
+    session.phone ? `*Phone:* ${session.phone}` : undefined,
+    session.pushName ? `*Push name:* ${session.pushName}` : undefined,
+    session.connectedAt ? `*Connected:* ${new Date(session.connectedAt).toISOString()}` : undefined,
+    session.lastActive ? `*Last active:* ${new Date(session.lastActive).toISOString()}` : undefined,
+  ].filter(Boolean);
+  return rows.join('\n');
+}
+
+export function statsText(stats: AdminStats): string {
+  const lines = (entries: Array<{ key: string; count: number }>) =>
+    entries.length
+      ? entries.map((e) => `• ${e.key} - ${e.count}`)
+      : ['• none yet'];
+  return [
+    '*Bot stats:*',
+    `*Messages seen:* ${stats.messagesSeen}`,
+    `*Known chats:* ${stats.knownChats}`,
+    '',
+    '_Top searches:_',
+    ...lines(stats.searches),
+    '',
+    '_Top downloads:_',
+    ...lines(stats.downloads),
+    '',
+    '_Errors:_',
+    ...lines(stats.errors),
+  ].join('\n');
+}
+
+export function broadcastResult(sent: number, max: number, total: number): string {
+  return `Broadcast sent to ${sent} chat(s)${sent < total ? ` (capped at ${max}, ${total - sent} skipped)` : ''}.`;
 }

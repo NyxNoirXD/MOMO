@@ -3,6 +3,8 @@
 // bot (compiled dist/) and drives it with HMAC-signed webhook deliveries.
 import crypto from 'node:crypto';
 import http from 'node:http';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
@@ -17,6 +19,8 @@ const BOT_PORT = 3301;
 const OPENWA_PORT = 3390;
 const ANILIST_PORT = 3391;
 const NEKO_PORT = 3392;
+const ADMIN_JID = '62811112222@c.us';
+const ADMIN_DATA_FILE = path.join(os.tmpdir(), 'momo-smoke-admin.json');
 
 const sent = [];
 const sentImages = [];
@@ -43,7 +47,14 @@ async function startOpenwaStub() {
   let sessionId = '00000000-0000-0000-0000-000000000001';
   const server = jsonServer(async (req, parsed, url) => {
     if (req.method === 'GET' && url === '/api/sessions') {
-      return { body: sessionId ? [{ id: sessionId, name: 'momo' }] : [] };
+      return {
+        body: sessionId
+          ? [{ id: sessionId, name: 'momo', status: 'ready', phone: '62811112222', pushName: 'MomoBot', connectedAt: '2026-08-14T00:00:00Z' }]
+          : [],
+      };
+    }
+    if (req.method === 'GET' && /\/api\/sessions\/[^/]+\/qr$/.test(url)) {
+      return { body: { qrCode: 'data:image/png;base64,QUJD', status: 'qr_ready' } };
     }
     if (req.method === 'POST' && url.endsWith('/messages/send-text')) {
       sent.push(parsed);
@@ -133,6 +144,7 @@ async function postWebhook(url, envelope) {
 }
 
 async function main() {
+  fs.rmSync(ADMIN_DATA_FILE, { force: true });
   const openwa = await startOpenwaStub();
   const anilist = startAnilistStub();
   const neko = startNekoStub();
@@ -149,6 +161,8 @@ async function main() {
       ANILIST_ENDPOINT: `http://127.0.0.1:${ANILIST_PORT}/`,
       NEKO_BASE_URL: `http://127.0.0.1:${NEKO_PORT}`,
       SEARCH_CACHE_TTL_MS: '60000',
+      ADMIN_JIDS: '62811112222',
+      ADMIN_DATA_FILE,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -435,6 +449,127 @@ async function main() {
       data: { id: 'wa_7f', from: '1234-1@g.us', to: '1234@c.us', chatId: '1234-1@g.us', author: '1234@c.us', body: '1', type: 'text', timestamp: 7, isGroup: true, kind: 'group', fromMe: false },
     });
     assert.equal(sent.at(-1).text.includes('Choose *language*'), true, 'bare number did not advance group flow');
+
+    // --- Admin commands: only the ADMIN_JIDS sender can use them ---
+
+    // status
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_adm_1',
+      data: { id: 'wa_adm_1', from: ADMIN_JID, to: '9999@c.us', body: 'status', type: 'text', timestamp: 8, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    assert.equal(sent.at(-1).text.includes('*Status:* ready'), true, 'admin status reply missing');
+
+    // qr -> sent as a base64 image
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_adm_2',
+      data: { id: 'wa_adm_2', from: ADMIN_JID, to: '9999@c.us', body: 'qr', type: 'text', timestamp: 8, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    const qrImg = sentImages.at(-1);
+    assert.equal(qrImg.media.base64, 'QUJD', 'qr base64 payload wrong');
+    assert.equal(qrImg.media.mimetype, 'image/png', 'qr mimetype wrong');
+    assert.equal(qrImg.caption.includes('Scan this QR'), true, 'qr caption wrong');
+
+    // reload -> single webhook re-registration
+    const regsBefore = webhookRegistrations.length;
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_adm_3',
+      data: { id: 'wa_adm_3', from: ADMIN_JID, to: '9999@c.us', body: 'reload', type: 'text', timestamp: 8, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    assert.equal(sent.at(-1).text.includes('Webhook: registered'), true, 'reload reply wrong');
+    assert.equal(webhookRegistrations.length, regsBefore + 1, 'reload did not re-register webhook');
+
+    // stats (admin-only); a non-admin "stats" falls through to an anime search
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_adm_4',
+      data: { id: 'wa_adm_4', from: ADMIN_JID, to: '9999@c.us', body: 'stats', type: 'text', timestamp: 8, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    assert.equal(sent.at(-1).text.includes('*Messages seen:*'), true, 'admin stats reply missing');
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_adm_5',
+      data: { id: 'wa_adm_5', from: '1234@c.us', to: '9999@c.us', body: 'stats', type: 'text', timestamp: 8, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    assert.equal(sent.at(-1).text.includes('Matches for "stats"'), true, 'non-admin "stats" should behave like a search');
+
+    // admin commands in groups: prefix optional (sender auth)
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_adm_6',
+      data: { id: 'wa_adm_6', from: '1234-1@g.us', to: '1234@c.us', chatId: '1234-1@g.us', author: ADMIN_JID, body: 'flush', type: 'text', timestamp: 8, isGroup: true, kind: 'group', fromMe: false },
+    });
+    assert.equal(sent.at(-1).text.includes('Cleared all flow states'), true, 'admin flush in group missing');
+
+    // allowlist info
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_adm_7',
+      data: { id: 'wa_adm_7', from: ADMIN_JID, to: '9999@c.us', body: 'allowlist', type: 'text', timestamp: 8, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    assert.equal(sent.at(-1).text.includes('Allowlist mode'), true, 'allowlist reply missing');
+
+    // ban -> banned sender silently ignored (DM + group-jid ban)
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_adm_8',
+      data: { id: 'wa_adm_8', from: ADMIN_JID, to: '9999@c.us', body: 'ban 5555@c.us', type: 'text', timestamp: 8, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    assert.equal(sent.at(-1).text.includes('Banned'), true, 'ban reply missing');
+    const bannedBefore = sent.length;
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_adm_9',
+      data: { id: 'wa_adm_9', from: '5555@c.us', to: '9999@c.us', body: '/help', type: 'text', timestamp: 8, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    assert.equal(sent.length, bannedBefore, 'banned user was answered');
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_adm_10',
+      data: { id: 'wa_adm_10', from: ADMIN_JID, to: '9999@c.us', body: 'ban 1234-1@g.us', type: 'text', timestamp: 8, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    const groupBannedBefore = sent.length;
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_adm_11',
+      data: { id: 'wa_adm_11', from: '1234-1@g.us', to: '1234@c.us', chatId: '1234-1@g.us', author: '1234@c.us', body: '/help', type: 'text', timestamp: 8, isGroup: true, kind: 'group', fromMe: false },
+    });
+    assert.equal(sent.length, groupBannedBefore, 'banned group was answered');
+
+    // unban restores service
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_adm_12',
+      data: { id: 'wa_adm_12', from: ADMIN_JID, to: '9999@c.us', body: 'unban 5555', type: 'text', timestamp: 8, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_adm_13',
+      data: { id: 'wa_adm_13', from: '5555@c.us', to: '9999@c.us', body: '/help', type: 'text', timestamp: 8, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    assert.equal(sent.at(-1).text.includes('Anime Download Bot'), true, 'unbanned user still ignored');
+
+    // broadcast reaches every known chat (DM + group + whoever messaged)
+    const bcBefore = sent.length;
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_adm_14',
+      data: { id: 'wa_adm_14', from: ADMIN_JID, to: '9999@c.us', body: 'broadcast hello everyone', type: 'text', timestamp: 8, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    const bc = sent.slice(bcBefore);
+    assert.equal(bc.some((m) => m.chatId === '1234@c.us' && m.text === 'hello everyone'), true, 'broadcast missed the DM chat');
+    assert.equal(bc.some((m) => m.chatId === '1234-1@g.us' && m.text === 'hello everyone'), true, 'broadcast missed the group chat');
+    assert.equal(sent.at(-1).text.includes('Broadcast sent to'), true, 'broadcast result summary missing');
+
+    // help never lists admin commands
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_adm_15',
+      data: { id: 'wa_adm_15', from: '1234@c.us', to: '9999@c.us', body: '/help', type: 'text', timestamp: 8, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    assert.equal(sent.at(-1).text.includes('broadcast'), false, 'help leaks admin commands');
 
     // Bad signature rejected
     const bad = Buffer.from(JSON.stringify({ event: 'message.received', data: { body: 'x' } }));

@@ -113,7 +113,16 @@ export function createWebhookHandler(
       try {
         const quoted = { quotedMessageId: data.id };
         const maxCaption = 1024;
-        if (reply.imageUrl) {
+        if (reply.imageData) {
+          // Inline image (e.g. the WhatsApp link QR) - no fallback; the QR is
+          // the reply, not decoration.
+          try {
+            await openwa.sendImageData(chatId, reply.imageData.base64, reply.imageData.mimetype, reply.text, quoted);
+          } catch (err) {
+            log(`image send failed: ${err instanceof Error ? err.message : String(err)}`);
+            await openwa.sendText(chatId, reply.text, quoted);
+          }
+        } else if (reply.imageUrl) {
           let caption = reply.text;
           let extraText: string | undefined;
           if (caption.length > maxCaption) {

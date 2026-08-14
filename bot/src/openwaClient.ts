@@ -71,6 +71,54 @@ export class OpenWaClient {
     });
   }
 
+  async sendImageData(
+    chatId: string,
+    base64: string,
+    mimetype: string,
+    caption: string,
+    opts: SendTextOptions = {},
+  ): Promise<unknown> {
+    const sessionId = await this.resolveSessionId();
+    return this.request(`/api/sessions/${sessionId}/messages/send-image`, {
+      method: 'POST',
+      body: {
+        chatId,
+        media: { base64, mimetype },
+        caption,
+        ...(opts.quotedMessageId ? { quotedMessageId: opts.quotedMessageId } : {}),
+      },
+    });
+  }
+
+  async getSessionStatus(): Promise<{
+    id: string;
+    name: string;
+    status: string;
+    phone?: string | null;
+    pushName?: string | null;
+    connectedAt?: string | null;
+    lastActive?: string | null;
+  } | null> {
+    const sessions = (await this.request('/api/sessions')) as Array<{
+      id: string;
+      name: string;
+      status: string;
+      phone?: string | null;
+      pushName?: string | null;
+      connectedAt?: string | null;
+      lastActive?: string | null;
+    }>;
+    return sessions.find((s) => s.name === this.sessionName) ?? null;
+  }
+
+  async getSessionQr(): Promise<{ qrCode: string; status: string } | null> {
+    const sessionId = await this.resolveSessionId();
+    return (await this.request(`/api/sessions/${sessionId}/qr`)) as {
+      qrCode: string;
+      status: string;
+    } | null;
+  }
+
   async listWebhooks(sessionId?: string): Promise<Array<{ id: string; url: string; active: boolean }>> {
     const id = sessionId ?? (await this.resolveSessionId());
     return (await this.request(`/api/sessions/${id}/webhooks`)) as Array<{

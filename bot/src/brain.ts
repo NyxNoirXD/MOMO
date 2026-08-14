@@ -1,12 +1,15 @@
 import type { AniListClient, AnimeMatch } from './anilist.js';
 import type { NekoResult, NekoStreamClient } from './nekostream.js';
 import { NekoError } from './nekostream.js';
+import type { AdminService } from './admin.js';
+import type { OpenWaClient } from './openwaClient.js';
 import {
   LANGS,
   Lang,
   QUALITIES,
   Quality,
   EpisodeRange,
+  broadcastResult,
   episodeLabel,
   episodePrompt,
   helpText,
@@ -19,6 +22,8 @@ import {
   parseEpisodes,
   qualityPrompt,
   searchList,
+  statsText,
+  statusText,
 } from './format.js';
 
 type Step = 'idle' | 'awaiting_pick' | 'awaiting_episode' | 'awaiting_lang' | 'awaiting_quality';
@@ -48,6 +53,8 @@ export interface BotReply {
   text: string;
   /** Optional cover image to attach to the reply. */
   imageUrl?: string;
+  /** Optional inline image (base64, e.g. the WhatsApp link QR). */
+  imageData?: { base64: string; mimetype: string };
 }
 
 export class BotBrain {
@@ -61,6 +68,9 @@ export class BotBrain {
     private readonly neko: NekoStreamClient,
     private readonly stateTtlMs: number,
     groupCommandPrefixes = '/!',
+    private readonly admin?: AdminService,
+    private readonly openwa?: OpenWaClient,
+    private readonly reloadWebhook?: () => Promise<string>,
   ) {
     this.prefixes = groupCommandPrefixes;
     const unique = [...new Set(groupCommandPrefixes)];
@@ -71,6 +81,26 @@ export class BotBrain {
     const raw = msg.body.trim();
     if (!raw) {
       return null;
+    }
+    const senderJid = msg.author ?? msg.chatId;
+    this.admin?.recordMessage();
+    this.admin?.recordChat(msg.chatId);
+    // Access control first: banned chats/users are silently ignored, and in
+    // allowlist mode only allowlisted users (and admins) get any reply.
+    if (this.admin?.isBannedChat(msg.chatId, senderJid)) {
+      return null;
+    }
+    if (this.admin && !this.admin.gateAllows(senderJid)) {
+      return null;
+    }
+    // Admin commands: recognized for admins only, in DM and groups (no prefix
+    // needed), and never shown in help. Non-admins fall through to the normal
+    // flow - the admin-only commands are not special to them.
+    if (this.admin?.isAdmin(senderJid)) {
+      const adminReply = await this.handleAdmin(raw.replace(this.prefixRe, ''));
+      if (adminReply) {
+        return adminReply;
+      }
     }
     // In groups, scope the flow to the SENDER: otherwise any member could
     // advance (or hijack) another member's active download by replying "1".
@@ -129,12 +159,112 @@ export class BotBrain {
     return this.runSearch(stateKey, raw, undefined);
   }
 
+  private async handleAdmin(stripped: string): Promise<BotReply | null> {
+    const lower = stripped.toLowerCase();
+    if (lower === 'status' || lower === 'session') {
+      if (!this.openwa) {
+        return { text: 'Status unavailable (no OpenWA client wired).' };
+      }
+      try {
+        return { text: statusText(await this.openwa.getSessionStatus()) };
+      } catch (err) {
+        return { text: `Status failed: ${errMsg(err)}` };
+      }
+    }
+    if (lower === 'qr') {
+      if (!this.openwa) {
+        return { text: 'QR unavailable (no OpenWA client wired).' };
+      }
+      try {
+        const qr = await this.openwa.getSessionQr();
+        if (!qr?.qrCode) {
+          return { text: 'No QR available - is the session already linked? Try *status*.' };
+        }
+        const m = qr.qrCode.match(/^data:image\/(png|jpeg);base64,(.+)$/);
+        if (!m) {
+          return { text: `Unexpected QR payload: ${qr.qrCode.slice(0, 120)}` };
+        }
+        return {
+          text: `*Scan this QR* (WhatsApp > Linked Devices > Link a Device). Session status: ${qr.status}. It expires quickly.`,
+          imageData: { base64: m[2], mimetype: `image/${m[1]}` },
+        };
+      } catch (err) {
+        return { text: `QR failed: ${errMsg(err)}` };
+      }
+    }
+    if (lower === 'reload') {
+      if (!this.reloadWebhook) {
+        return { text: 'Reload unavailable (no webhook callback wired).' };
+      }
+      try {
+        return { text: `Webhook: ${await this.reloadWebhook()}` };
+      } catch (err) {
+        return { text: `Reload failed: ${errMsg(err)}` };
+      }
+    }
+    const ban = stripped.match(/^ban\s+(\S+)$/);
+    if (ban) {
+      return { text: this.admin!.ban(ban[1]) };
+    }
+    const unban = stripped.match(/^unban\s+(\S+)$/);
+    if (unban) {
+      return { text: this.admin!.unban(unban[1]) };
+    }
+    const allow = stripped.match(/^allow\s+(\S+)$/);
+    if (allow) {
+      return { text: this.admin!.allow(allow[1]) };
+    }
+    const deny = stripped.match(/^deny\s+(\S+)$/);
+    if (deny) {
+      return { text: this.admin!.deny(deny[1]) };
+    }
+    if (lower === 'allowlist') {
+      return { text: this.admin!.allowlistInfo() };
+    }
+    if (lower === 'stats') {
+      return { text: statsText(this.admin!.stats()) };
+    }
+    if (lower === 'flush') {
+      this.flush();
+      return { text: 'Cleared all flow states and caches.' };
+    }
+    const broadcast = stripped.match(/^broadcast\s+(.+)$/);
+    if (broadcast && this.admin && this.openwa) {
+      const targets = this.admin.broadcastTargets();
+      if (targets.length === 0) {
+        return { text: 'No known chats to broadcast to yet.' };
+      }
+      let sent = 0;
+      const failures: string[] = [];
+      for (const target of targets) {
+        try {
+          await this.openwa.sendText(target, broadcast[1]);
+          sent++;
+        } catch (err) {
+          failures.push(`${target}: ${errMsg(err)}`);
+        }
+      }
+      const base = broadcastResult(sent, this.admin.broadcastCap(), targets.length);
+      return {
+        text: failures.length ? `${base}\n_Failures:_ ${failures.join('; ')}` : base,
+      };
+    }
+    return null;
+  }
+
+  flush(): void {
+    this.states.clear();
+    this.anilist.flush();
+  }
+
   private async runSearch(chatId: string, query: string, spec: EpisodeSpec | undefined): Promise<BotReply> {
+    this.admin?.recordSearch(query);
     let results: AnimeMatch[];
     try {
       results = await this.anilist.search(query);
     } catch (err) {
-      return { text: `Search failed: ${err instanceof Error ? err.message : String(err)}` };
+      this.admin?.recordError(errMsg(err));
+      return { text: `Search failed: ${errMsg(err)}` };
     }
     if (results.length === 0) {
       this.states.delete(chatId);
@@ -233,11 +363,13 @@ export class BotBrain {
         fetched.push({ episode, result: await this.neko.fetch(anime.malId, episode) });
       } catch (err) {
         const message =
-          err instanceof NekoError ? err.message : `Download API error: ${err instanceof Error ? err.message : String(err)}`;
+          err instanceof NekoError ? err.message : `Download API error: ${errMsg(err)}`;
         failed.push({ episode, message });
+        this.admin?.recordError(message);
       }
     }
     if (fetched.length === 0) {
+      this.admin?.recordError(`no links: ${anime.title} ${episodeLabel(episodes)}`);
       return {
         text: [
           `No links for ${episodeLabel(episodes)} (${lang}, ${quality}).`,
@@ -248,6 +380,7 @@ export class BotBrain {
         ].join('\n'),
       };
     }
+    this.admin?.recordDownload(anime.title);
     return { text: linkCard(anime, episodes, lang, quality, fetched, failed), imageUrl: anime.coverImage };
   }
 
@@ -330,4 +463,8 @@ function isAdvanceInput(state: FlowState, raw: string): boolean {
     return isQuality(t) || /^[123]$/.test(t);
   }
   return false;
+}
+
+function errMsg(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }

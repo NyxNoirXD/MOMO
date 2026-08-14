@@ -5,6 +5,7 @@ import { AniListClient } from './anilist.js';
 import { NekoStreamClient } from './nekostream.js';
 import { BotBrain } from './brain.js';
 import { OpenWaClient } from './openwaClient.js';
+import { AdminService } from './admin.js';
 import { createWebhookHandler } from './webhook.js';
 
 function log(msg: string): void {
@@ -30,6 +31,21 @@ function resolveApiKey(configured: string): string {
   return '';
 }
 
+/** Single registration attempt - used both by the retry loop and the admin `reload` command. */
+async function registerWebhookOnce(
+  openwa: OpenWaClient,
+  publicUrl: string,
+  secret: string,
+): Promise<string> {
+  const webhookUrl = `${publicUrl.replace(/\/+$/, '')}/webhook`;
+  const existing = await openwa.listWebhooks();
+  if (existing.some((w) => w.url === webhookUrl && w.active)) {
+    return 'already registered';
+  }
+  await openwa.createWebhook(webhookUrl, secret);
+  return 'registered';
+}
+
 async function ensureWebhookRegistered(
   openwa: OpenWaClient,
   publicUrl: string,
@@ -43,13 +59,7 @@ async function ensureWebhookRegistered(
   // re-read on every attempt, so a late-created /app/data/.api-key is picked up.
   for (let attempt = 1; ; attempt++) {
     try {
-      const existing = await openwa.listWebhooks();
-      if (existing.some((w) => w.url === webhookUrl && w.active)) {
-        log('webhook already registered');
-        return;
-      }
-      await openwa.createWebhook(webhookUrl, secret);
-      log('webhook registered');
+      log(`webhook ${await registerWebhookOnce(openwa, publicUrl, secret)}`);
       return;
     } catch (err) {
       if (attempt === 1 || attempt % 10 === 0) {
@@ -67,11 +77,25 @@ async function main(): Promise<void> {
     () => resolveApiKey(config.openwaApiKey),
     config.openwaSessionName,
   );
+  const admin = new AdminService(
+    config.adminJids,
+    config.allowlistEnabled,
+    config.broadcastMax,
+    config.adminDataFile,
+  );
   const brain = new BotBrain(
     new AniListClient(config.searchCacheTtlMs, config.anilistEndpoint),
     new NekoStreamClient(config.nekoBaseUrl),
     config.stateTtlMs,
     config.groupCommandPrefixes,
+    admin,
+    openwa,
+    async () => {
+      if (!config.publicUrl || !config.webhookSecret) {
+        return 'auto-registration disabled (set OPENWA_PUBLIC_URL + WEBHOOK_SECRET)';
+      }
+      return registerWebhookOnce(openwa, config.publicUrl, config.webhookSecret);
+    },
   );
 
   const app = express();
@@ -83,6 +107,10 @@ async function main(): Promise<void> {
 
   app.listen(config.port, () => {
     log(`bot listening on :${config.port}`);
+    log(`admin JIDs: ${config.adminJids.length ? config.adminJids.join(', ') : 'NONE (no admin commands active)'}`);
+    if (config.allowlistEnabled) {
+      log('allowlist mode ENFORCED - only allowlisted users are answered');
+    }
     if (resolveApiKey(config.openwaApiKey)) {
       log('OpenWA API key: configured');
     } else {
