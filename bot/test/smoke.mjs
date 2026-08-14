@@ -88,7 +88,7 @@ function startAnilistStub() {
 
 function startNekoStub() {
   const server = jsonServer(async (req) => {
-    if (req.method === 'GET' && req.url.startsWith('/61316/1/')) {
+    if (req.method === 'GET' && /^\/61316\/\d+\//.test(req.url)) {
       return {
         body: {
           Kiwi: {
@@ -172,7 +172,7 @@ async function main() {
     assert.equal(sent.at(-1).text.includes('Anime Download Bot'), true, 'help reply missing');
     assert.equal(sent.at(-1).quotedMessageId, 'wa_1', 'reply not quoted');
 
-    // Multi-step: search -> pick -> episode -> quality
+    // Multi-step: search -> pick -> episode -> sub/dub -> quality
     await postWebhook(`${base}/webhook`, {
       event: 'message.received',
       idempotencyKey: 'msg_2',
@@ -194,7 +194,14 @@ async function main() {
       idempotencyKey: 'msg_4',
       data: { id: 'wa_4', from: '1234@c.us', to: '9999@c.us', body: '1', type: 'text', timestamp: 4, isGroup: false, kind: 'individual', fromMe: false },
     });
-    assert.equal(sent.at(-1).text.includes('Choose *quality*'), true, 'quality prompt missing');
+    assert.equal(sent.at(-1).text.includes('Choose *language*'), true, 'language prompt missing after episode');
+
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_4b',
+      data: { id: 'wa_4b', from: '1234@c.us', to: '9999@c.us', body: 'sub', type: 'text', timestamp: 4, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    assert.equal(sent.at(-1).text.includes('Choose *quality*'), true, 'quality prompt missing after language');
 
     await postWebhook(`${base}/webhook`, {
       event: 'message.received',
@@ -202,11 +209,51 @@ async function main() {
       data: { id: 'wa_5', from: '1234@c.us', to: '9999@c.us', body: '720p', type: 'text', timestamp: 5, isGroup: false, kind: 'individual', fromMe: false },
     });
     const card = sent.at(-1).text;
-    assert.equal(card.includes('Episode 1 (720p)'), true, 'card header missing');
+    assert.equal(card.includes('Episode 1 (sub, 720p)'), true, 'card header missing');
     assert.equal(card.includes('https://pahe.test/k2'), true, 'Kiwi sub 720p missing');
-    assert.equal(card.includes('https://pahe.test/kd'), true, 'Kiwi dub 720p missing');
+    assert.equal(card.includes('https://pahe.test/kd'), false, 'dub link leaked into sub-only card');
     assert.equal(card.includes('https://gogo.test/g1'), true, 'gogoanime 720p missing');
     assert.equal(card.includes('*Kiwi*'), true, 'server header missing');
+
+    // Range in the flow: 5-8 -> sub -> 720p -> one combined card
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_2b',
+      data: { id: 'wa_2b', from: '1234@c.us', to: '9999@c.us', body: 're zero', type: 'text', timestamp: 2, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_3b',
+      data: { id: 'wa_3b', from: '1234@c.us', to: '9999@c.us', body: '1', type: 'text', timestamp: 3, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_4b2',
+      data: { id: 'wa_4b2', from: '1234@c.us', to: '9999@c.us', body: '5-8', type: 'text', timestamp: 4, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    assert.equal(sent.at(-1).text.includes('Episodes 5-8'), true, 'range did not reach language prompt');
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_4b3',
+      data: { id: 'wa_4b3', from: '1234@c.us', to: '9999@c.us', body: 'sub', type: 'text', timestamp: 4, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_5b',
+      data: { id: 'wa_5b', from: '1234@c.us', to: '9999@c.us', body: '720p', type: 'text', timestamp: 5, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    const rangeCard = sent.at(-1).text;
+    assert.equal(rangeCard.includes('Episodes 5-8 (sub, 720p)'), true, 'range card header missing');
+    assert.equal(rangeCard.includes('Ep 5: https://pahe.test/k2'), true, 'range card missing ep 5');
+    assert.equal(rangeCard.includes('Ep 8: https://pahe.test/k2'), true, 'range card missing ep 8');
+
+    // Oversized range rejected
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_2c',
+      data: { id: 'wa_2c', from: '1234@c.us', to: '9999@c.us', body: 'd re zero 1-30', type: 'text', timestamp: 2, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    assert.equal(sent.at(-1).text.includes('Max *24* episodes per request'), true, 'oversized range not rejected');
 
     // Quick command
     await postWebhook(`${base}/webhook`, {
@@ -221,7 +268,21 @@ async function main() {
       idempotencyKey: 'msg_6b',
       data: { id: 'wa_6b', from: '1234@c.us', to: '9999@c.us', body: '1', type: 'text', timestamp: 6, isGroup: false, kind: 'individual', fromMe: false },
     });
-    assert.equal(sent.at(-1).text.includes('Choose *quality*'), true, 'quick command did not reach quality step');
+    assert.equal(sent.at(-1).text.includes('Choose *language*'), true, 'quick command did not reach language step');
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_6c',
+      data: { id: 'wa_6c', from: '1234@c.us', to: '9999@c.us', body: 'dub', type: 'text', timestamp: 6, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    await postWebhook(`${base}/webhook`, {
+      event: 'message.received',
+      idempotencyKey: 'msg_6d',
+      data: { id: 'wa_6d', from: '1234@c.us', to: '9999@c.us', body: '720p', type: 'text', timestamp: 6, isGroup: false, kind: 'individual', fromMe: false },
+    });
+    const dubCard = sent.at(-1).text;
+    assert.equal(dubCard.includes('Episode 1 (dub, 720p)'), true, 'dub card header missing');
+    assert.equal(dubCard.includes('https://pahe.test/kd'), true, 'Kiwi dub 720p missing');
+    assert.equal(dubCard.includes('https://pahe.test/k2'), false, 'sub link leaked into dub-only card');
 
     // Group flow: commands need a prefix, bare text ignored
     const before = sent.length;
@@ -279,7 +340,7 @@ async function main() {
       idempotencyKey: 'msg_7f',
       data: { id: 'wa_7f', from: '1234-1@g.us', to: '1234@c.us', chatId: '1234-1@g.us', author: '1234@c.us', body: '1', type: 'text', timestamp: 7, isGroup: true, kind: 'group', fromMe: false },
     });
-    assert.equal(sent.at(-1).text.includes('Choose *quality*'), true, 'bare number did not advance group flow');
+    assert.equal(sent.at(-1).text.includes('Choose *language*'), true, 'bare number did not advance group flow');
 
     // Bad signature rejected
     const bad = Buffer.from(JSON.stringify({ event: 'message.received', data: { body: 'x' } }));
