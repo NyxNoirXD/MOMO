@@ -34,7 +34,7 @@ query ($search: String) {
       startDate { year }
       nextAiringEpisode { episode }
       coverImage { large }
-      synopsis
+      description
       meanScore
       duration
       genres
@@ -59,6 +59,10 @@ const FORMAT_PRIORITY: Record<string, number> = {
   MOVIE: 4,
   OVA: 5,
 };
+
+function stripHtml(html: string): string {
+  return html.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+}
 
 export class AnimeNotFoundError extends Error {
   constructor(query: string) {
@@ -119,7 +123,7 @@ export class AniListClient {
         year: (m.startDate as { year?: number | null } | null)?.year ?? undefined,
         nextAiringEpisode: (m.nextAiringEpisode as { episode?: number } | null)?.episode,
         coverImage: (m.coverImage as { large?: string } | null)?.large,
-        synopsis: typeof m.synopsis === 'string' ? m.synopsis : undefined,
+        synopsis: typeof m.description === 'string' ? stripHtml(m.description) : undefined,
         meanScore: m.meanScore == null ? undefined : Number(m.meanScore),
         status: typeof m.status === 'string' ? m.status : undefined,
         duration: m.duration == null ? undefined : Number(m.duration),

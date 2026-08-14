@@ -101,7 +101,7 @@ function startAnilistStub() {
           data: {
             Page: {
               media: [
-                { id: 1, idMal: 61316, title: { romaji: 'Re:Zero Season 4', english: 'Re:Zero' }, episodes: 12, format: 'TV', status: 'RELEASING', startDate: { year: 2016 }, nextAiringEpisode: { episode: 8 }, coverImage: { large: 'https://img.test/cover-rezero.jpg' }, synopsis: 'A boy gets reincarnated into a fantasy world.', meanScore: 90, duration: 25, genres: ['Drama', 'Fantasy'], studios: { nodes: [{ name: 'White Fox' }] } },
+                { id: 1, idMal: 61316, title: { romaji: 'Re:Zero Season 4', english: 'Re:Zero' }, episodes: 12, format: 'TV', status: 'RELEASING', startDate: { year: 2016 }, nextAiringEpisode: { episode: 8 }, coverImage: { large: 'https://img.test/cover-rezero.jpg' }, description: 'A boy gets reincarnated into a fantasy world.', meanScore: 90, duration: 25, genres: ['Drama', 'Fantasy'], studios: { nodes: [{ name: 'White Fox' }] } },
                 { id: 2, idMal: 99999, title: { romaji: 'Re:Zero The Movie', english: null }, episodes: 1, format: 'MOVIE', status: 'FINISHED', startDate: { year: 2019 }, coverImage: { large: 'https://img.test/cover-movie.jpg' } },
               ],
             },
